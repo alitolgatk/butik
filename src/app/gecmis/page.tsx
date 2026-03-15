@@ -5,25 +5,36 @@ import Link from "next/link";
 import { ArrowLeft, Loader2, ReceiptText, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/lib/supabase";
-import { formatTL, SALE_TYPE_LABELS } from "@/lib/cart";
-import type { SaleType } from "@/lib/types";
+import { formatTL, SALE_TYPE_LABELS, DEBT_PAYMENT_TYPE_LABELS } from "@/lib/cart";
+import type { DebtPaymentType, SaleType } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { ReceiptSheet } from "@/components/receipt-sheet";
 
-interface HistoryRow {
-  id: string;
-  type: SaleType;
-  total_amount: number;
-  created_at: string;
-  customer_name: string | null;
-  item_names: string;
-}
+type HistoryEntry =
+  | {
+      kind: "sale";
+      id: string;
+      type: SaleType;
+      total_amount: number;
+      created_at: string;
+      customer_name: string | null;
+      item_names: string;
+    }
+  | {
+      kind: "payment";
+      id: string;
+      amount: number;
+      created_at: string;
+      customer_name: string | null;
+      note: string | null;
+      payment_type: DebtPaymentType | null;
+    };
 
 function formatDateShort(date: Date): string {
   return date.toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
 }
 
-type FilterType = "all" | SaleType;
+type FilterType = "all" | SaleType | "tahsilat";
 const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: "all", label: "Tümü" },
   { value: "nakit", label: "Nakit" },
@@ -31,10 +42,11 @@ const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: "havale", label: "Havale" },
   { value: "acik_hesap", label: "Açık Hesap" },
   { value: "emanet", label: "Emanet" },
+  { value: "tahsilat", label: "Tahsilat" },
 ];
 
 export default function GecmisPage() {
-  const [rows, setRows] = useState<HistoryRow[]>([]);
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterType>("all");
@@ -47,25 +59,44 @@ export default function GecmisPage() {
     try {
       const supabase = getSupabase();
 
-      const { data: sales, error } = await supabase
-        .from("sales")
-        .select("id, type, total_amount, created_at, customer_id")
-        .eq("status", "completed")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (error) throw error;
+      const [salesRes, paymentsRes] = await Promise.all([
+        supabase
+          .from("sales")
+          .select("id, type, total_amount, created_at, customer_id")
+          .eq("status", "completed")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("debt_payments")
+          .select("id, amount, created_at, customer_id, note, payment_type")
+          .order("created_at", { ascending: false })
+          .limit(200),
+      ]);
 
-      const allSales = (sales ?? []) as {
+      if (salesRes.error) throw salesRes.error;
+
+      const allSales = (salesRes.data ?? []) as {
         id: string;
         type: SaleType;
         total_amount: number;
         created_at: string;
         customer_id: string | null;
       }[];
+      const allPayments = (paymentsRes.data ?? []) as {
+        id: string;
+        amount: number;
+        created_at: string;
+        customer_id: string;
+        note: string | null;
+        payment_type: DebtPaymentType | null;
+      }[];
 
-      // customer names
+      // Resolve customer names
       const custIds = Array.from(
-        new Set(allSales.map((s) => s.customer_id).filter(Boolean) as string[])
+        new Set([
+          ...allSales.map((s) => s.customer_id).filter(Boolean),
+          ...allPayments.map((p) => p.customer_id).filter(Boolean),
+        ] as string[])
       );
       const nameMap: Record<string, string> = {};
       if (custIds.length > 0) {
@@ -74,11 +105,12 @@ export default function GecmisPage() {
           .select("id, name")
           .in("id", custIds);
         for (const c of custs ?? []) {
-          nameMap[(c as { id: string; name: string }).id] = (c as { id: string; name: string }).name;
+          const cust = c as { id: string; name: string };
+          nameMap[cust.id] = cust.name;
         }
       }
 
-      // item names for search
+      // Resolve item names for sales search
       const saleIds = allSales.map((s) => s.id);
       const itemNameMap: Record<string, string> = {};
       if (saleIds.length > 0) {
@@ -97,16 +129,32 @@ export default function GecmisPage() {
         }
       }
 
-      setRows(
-        allSales.map((s) => ({
-          id: s.id,
-          type: s.type,
-          total_amount: s.total_amount,
-          created_at: s.created_at,
-          customer_name: s.customer_id ? nameMap[s.customer_id] ?? null : null,
-          item_names: itemNameMap[s.id] ?? "",
-        }))
+      const saleEntries: HistoryEntry[] = allSales.map((s) => ({
+        kind: "sale",
+        id: s.id,
+        type: s.type,
+        total_amount: s.total_amount,
+        created_at: s.created_at,
+        customer_name: s.customer_id ? nameMap[s.customer_id] ?? null : null,
+        item_names: itemNameMap[s.id] ?? "",
+      }));
+
+      const paymentEntries: HistoryEntry[] = allPayments.map((p) => ({
+        kind: "payment",
+        id: p.id,
+        amount: Number(p.amount),
+        created_at: p.created_at,
+        customer_name: p.customer_id ? nameMap[p.customer_id] ?? null : null,
+        note: p.note,
+        payment_type: p.payment_type,
+      }));
+
+      const merged = [...saleEntries, ...paymentEntries].sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+
+      setEntries(merged);
     } catch {
       // silent
     } finally {
@@ -119,20 +167,27 @@ export default function GecmisPage() {
   }, [fetchHistory]);
 
   const filtered = useMemo(() => {
-    let result = rows;
-    if (filter !== "all") {
-      result = result.filter((r) => r.type === filter);
-    }
-    const q = search.toLowerCase().trim();
-    if (q) {
+    let result = entries;
+
+    if (filter === "tahsilat") {
+      result = result.filter((e) => e.kind === "payment");
+    } else if (filter !== "all") {
       result = result.filter(
-        (r) =>
-          (r.customer_name && r.customer_name.toLowerCase().includes(q)) ||
-          r.item_names.toLowerCase().includes(q)
+        (e) => e.kind === "sale" && e.type === filter
       );
     }
+
+    const q = search.toLowerCase().trim();
+    if (q) {
+      result = result.filter((e) => {
+        if (e.customer_name && e.customer_name.toLowerCase().includes(q)) return true;
+        if (e.kind === "sale" && e.item_names.toLowerCase().includes(q)) return true;
+        if (e.kind === "payment" && e.note && e.note.toLowerCase().includes(q)) return true;
+        return false;
+      });
+    }
     return result;
-  }, [rows, filter, search]);
+  }, [entries, filter, search]);
 
   function openReceipt(saleId: string) {
     setReceiptSaleId(saleId);
@@ -142,7 +197,6 @@ export default function GecmisPage() {
   return (
     <>
       <div className="flex flex-col gap-4 px-4 pt-6">
-        {/* Header with back */}
         <div className="flex items-center gap-3">
           <Link
             href="/"
@@ -150,21 +204,21 @@ export default function GecmisPage() {
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
-          <h1 className="text-xl font-bold tracking-tight">Satış Geçmişi</h1>
+          <h1 className="text-xl font-bold tracking-tight">
+            Satış Geçmişi
+          </h1>
         </div>
 
-        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Müşteri veya ürün ara..."
+            placeholder="Müşteri, ürün veya not ara..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
           />
         </div>
 
-        {/* Filter tabs */}
         <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {FILTER_OPTIONS.map((opt) => (
             <button
@@ -182,7 +236,6 @@ export default function GecmisPage() {
           ))}
         </div>
 
-        {/* List */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -193,40 +246,81 @@ export default function GecmisPage() {
               <ReceiptText className="h-10 w-10 text-muted-foreground" />
             </div>
             <p className="font-medium">
-              {search || filter !== "all" ? "Sonuç bulunamadı" : "Henüz satış yok"}
+              {search || filter !== "all"
+                ? "Sonuç bulunamadı"
+                : "Henüz işlem yok"}
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-1 pb-4">
-            {filtered.map((sale) => (
-              <button
-                key={sale.id}
-                onClick={() => openReceipt(sale.id)}
-                className="flex items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="text-base">
-                    {SALE_TYPE_LABELS[sale.type].emoji}
-                  </span>
-                  <div>
-                    <p className="text-sm font-medium">
-                      {SALE_TYPE_LABELS[sale.type].label}
-                      {sale.customer_name && (
-                        <span className="ml-1 text-xs font-normal text-muted-foreground">
-                          · {sale.customer_name}
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDateShort(new Date(sale.created_at))}
-                    </p>
+            {filtered.map((entry) =>
+              entry.kind === "sale" ? (
+                <button
+                  key={`s-${entry.id}`}
+                  onClick={() => openReceipt(entry.id)}
+                  className="flex items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">
+                      {SALE_TYPE_LABELS[entry.type].emoji}
+                    </span>
+                    <div>
+                      <p className="text-sm font-medium">
+                        {SALE_TYPE_LABELS[entry.type].label}
+                        {entry.customer_name && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            · {entry.customer_name}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateShort(new Date(entry.created_at))}
+                      </p>
+                    </div>
                   </div>
+                  <span className="text-sm font-bold text-primary">
+                    {formatTL(entry.total_amount)}
+                  </span>
+                </button>
+              ) : (
+                <div
+                  key={`p-${entry.id}`}
+                  className="flex items-center justify-between rounded-lg px-2 py-2.5"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-base">
+                      {entry.payment_type
+                        ? DEBT_PAYMENT_TYPE_LABELS[entry.payment_type].emoji
+                        : "✅"}
+                    </span>
+                    <div>
+                      <p className="text-sm font-medium">
+                        Tahsilat
+                        {entry.payment_type && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            ({DEBT_PAYMENT_TYPE_LABELS[entry.payment_type].label})
+                          </span>
+                        )}
+                        {entry.customer_name && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            · {entry.customer_name}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateShort(new Date(entry.created_at))}
+                        {entry.note && (
+                          <span className="ml-1">· {entry.note}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold text-emerald-600">
+                    {formatTL(entry.amount)}
+                  </span>
                 </div>
-                <span className="text-sm font-bold text-primary">
-                  {formatTL(sale.total_amount)}
-                </span>
-              </button>
-            ))}
+              )
+            )}
           </div>
         )}
       </div>

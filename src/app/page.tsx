@@ -16,8 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
-import { formatTL, SALE_TYPE_LABELS } from "@/lib/cart";
-import type { SaleType } from "@/lib/types";
+import { formatTL, SALE_TYPE_LABELS, DEBT_PAYMENT_TYPE_LABELS } from "@/lib/cart";
+import type { DebtPaymentType, SaleType } from "@/lib/types";
 import { ReceiptSheet } from "@/components/receipt-sheet";
 import {
   Sheet,
@@ -58,13 +58,9 @@ interface DashboardData {
   activeEmanetCount: number;
 }
 
-interface RecentSale {
-  id: string;
-  type: SaleType;
-  total_amount: number;
-  created_at: string;
-  customer_name: string | null;
-}
+type FeedEntry =
+  | { kind: "sale"; id: string; type: SaleType; total_amount: number; created_at: string; customer_name: string | null }
+  | { kind: "payment"; id: string; amount: number; created_at: string; customer_name: string | null; note: string | null; payment_type: DebtPaymentType | null };
 
 interface StatsData {
   totalRevenue: number;
@@ -91,8 +87,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Recent sales
-  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  // Feed
+  const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptSaleId, setReceiptSaleId] = useState<string | null>(null);
 
@@ -117,7 +113,7 @@ export default function HomePage() {
   });
   const [statsLoading, setStatsLoading] = useState(true);
 
-  // ─── Fetch dashboard cards + recent ───
+  // ─── Fetch dashboard cards + recent feed ───
   useEffect(() => {
     async function fetchDashboard() {
       try {
@@ -125,25 +121,31 @@ export default function HomePage() {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
-        const [salesRes, debtRes, emanetRes, recentRes] = await Promise.all([
-          supabase
-            .from("sales")
-            .select("total_amount")
-            .gte("created_at", todayStart.toISOString())
-            .neq("type", "emanet"),
-          supabase.from("customers").select("id").gt("total_debt", 0),
-          supabase
-            .from("sales")
-            .select("id")
-            .eq("type", "emanet")
-            .eq("status", "open"),
-          supabase
-            .from("sales")
-            .select("id, type, total_amount, created_at, customer_id")
-            .eq("status", "completed")
-            .order("created_at", { ascending: false })
-            .limit(5),
-        ]);
+        const [salesRes, debtRes, emanetRes, recentSalesRes, recentPaymentsRes] =
+          await Promise.all([
+            supabase
+              .from("sales")
+              .select("total_amount")
+              .gte("created_at", todayStart.toISOString())
+              .neq("type", "emanet"),
+            supabase.from("customers").select("id").gt("total_debt", 0),
+            supabase
+              .from("sales")
+              .select("id")
+              .eq("type", "emanet")
+              .eq("status", "open"),
+            supabase
+              .from("sales")
+              .select("id, type, total_amount, created_at, customer_id")
+              .eq("status", "completed")
+              .order("created_at", { ascending: false })
+              .limit(10),
+            supabase
+              .from("debt_payments")
+              .select("id, amount, created_at, customer_id, note, payment_type")
+              .order("created_at", { ascending: false })
+              .limit(10),
+          ]);
 
         const sales = salesRes.data ?? [];
         const totalAmount = sales.reduce(
@@ -158,38 +160,69 @@ export default function HomePage() {
           activeEmanetCount: emanetRes.data?.length ?? 0,
         });
 
-        // Resolve customer names for recent
-        const recent = (recentRes.data ?? []) as {
+        // Gather all customer IDs from both sources
+        const recentSales = (recentSalesRes.data ?? []) as {
           id: string;
           type: SaleType;
           total_amount: number;
           created_at: string;
           customer_id: string | null;
         }[];
+        const recentPayments = (recentPaymentsRes.data ?? []) as {
+          id: string;
+          amount: number;
+          created_at: string;
+          customer_id: string;
+          note: string | null;
+          payment_type: DebtPaymentType | null;
+        }[];
 
-        const customerIds = Array.from(
-          new Set(recent.map((r) => r.customer_id).filter(Boolean) as string[])
+        const allCustIds = Array.from(
+          new Set([
+            ...recentSales.map((r) => r.customer_id).filter(Boolean),
+            ...recentPayments.map((r) => r.customer_id).filter(Boolean),
+          ] as string[])
         );
         const nameMap: Record<string, string> = {};
-        if (customerIds.length > 0) {
+        if (allCustIds.length > 0) {
           const { data: custs } = await supabase
             .from("customers")
             .select("id, name")
-            .in("id", customerIds);
+            .in("id", allCustIds);
           for (const c of custs ?? []) {
-            nameMap[(c as { id: string; name: string }).id] = (c as { id: string; name: string }).name;
+            const cust = c as { id: string; name: string };
+            nameMap[cust.id] = cust.name;
           }
         }
 
-        setRecentSales(
-          recent.map((r) => ({
-            id: r.id,
-            type: r.type,
-            total_amount: r.total_amount,
-            created_at: r.created_at,
-            customer_name: r.customer_id ? nameMap[r.customer_id] ?? null : null,
-          }))
-        );
+        // Build unified feed
+        const saleEntries: FeedEntry[] = recentSales.map((r) => ({
+          kind: "sale",
+          id: r.id,
+          type: r.type,
+          total_amount: r.total_amount,
+          created_at: r.created_at,
+          customer_name: r.customer_id ? nameMap[r.customer_id] ?? null : null,
+        }));
+        const paymentEntries: FeedEntry[] = recentPayments.map((r) => ({
+          kind: "payment",
+          id: r.id,
+          amount: Number(r.amount),
+          created_at: r.created_at,
+          customer_name: r.customer_id ? nameMap[r.customer_id] ?? null : null,
+          note: r.note,
+          payment_type: r.payment_type,
+        }));
+
+        const merged = [...saleEntries, ...paymentEntries]
+          .sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() -
+              new Date(a.created_at).getTime()
+          )
+          .slice(0, 5);
+
+        setFeed(merged);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Veri yüklenemedi");
       } finally {
@@ -337,7 +370,6 @@ export default function HomePage() {
         <div>
           <p className="mb-3 text-sm font-semibold">İstatistik</p>
 
-          {/* Month selector */}
           <div className="flex items-center justify-between rounded-lg border px-1 py-1">
             <button
               onClick={prevMonth}
@@ -365,11 +397,12 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Revenue card */}
           <Card className="mt-3 border-0 bg-primary/5 shadow-none">
             <CardContent className="p-4 text-center">
               <p className="text-xs text-muted-foreground">
-                {customRange ? "Seçili Dönem Cirosu" : `${statsPeriod.label} Cirosu`}
+                {customRange
+                  ? "Seçili Dönem Cirosu"
+                  : `${statsPeriod.label} Cirosu`}
               </p>
               {statsLoading ? (
                 <div className="mx-auto mt-2 h-8 w-32 animate-pulse rounded bg-muted" />
@@ -384,7 +417,6 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* Breakdown */}
           {stats.breakdown.length > 0 && (
             <Card className="mt-3 border-0 shadow-sm">
               <CardContent className="p-4">
@@ -438,59 +470,95 @@ export default function HomePage() {
             </Link>
           </div>
 
-          {recentSales.length === 0 && !loading ? (
+          {feed.length === 0 && !loading ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              Henüz satış yok
+              Henüz işlem yok
             </p>
           ) : (
             <div className="mt-2 flex flex-col gap-1">
-              {recentSales.map((sale) => (
-                <button
-                  key={sale.id}
-                  onClick={() => openReceipt(sale.id)}
-                  className="flex items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-base">
-                      {SALE_TYPE_LABELS[sale.type].emoji}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">
-                        {SALE_TYPE_LABELS[sale.type].label}
-                        {sale.customer_name && (
-                          <span className="ml-1 text-xs font-normal text-muted-foreground">
-                            · {sale.customer_name}
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDateShort(new Date(sale.created_at))}
-                      </p>
+              {feed.map((entry) =>
+                entry.kind === "sale" ? (
+                  <button
+                    key={`s-${entry.id}`}
+                    onClick={() => openReceipt(entry.id)}
+                    className="flex items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">
+                        {SALE_TYPE_LABELS[entry.type].emoji}
+                      </span>
+                      <div>
+                        <p className="text-sm font-medium">
+                          {SALE_TYPE_LABELS[entry.type].label}
+                          {entry.customer_name && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              · {entry.customer_name}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateShort(new Date(entry.created_at))}
+                        </p>
+                      </div>
                     </div>
+                    <span className="text-sm font-bold text-primary">
+                      {formatTL(entry.total_amount)}
+                    </span>
+                  </button>
+                ) : (
+                  <div
+                    key={`p-${entry.id}`}
+                    className="flex items-center justify-between rounded-lg px-2 py-2.5"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">
+                        {entry.payment_type
+                          ? DEBT_PAYMENT_TYPE_LABELS[entry.payment_type].emoji
+                          : "✅"}
+                      </span>
+                      <div>
+                        <p className="text-sm font-medium">
+                          Tahsilat
+                          {entry.payment_type && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              ({DEBT_PAYMENT_TYPE_LABELS[entry.payment_type].label})
+                            </span>
+                          )}
+                          {entry.customer_name && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              · {entry.customer_name}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateShort(new Date(entry.created_at))}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-sm font-bold text-emerald-600">
+                      {formatTL(entry.amount)}
+                    </span>
                   </div>
-                  <span className="text-sm font-bold text-primary">
-                    {formatTL(sale.total_amount)}
-                  </span>
-                </button>
-              ))}
+                )
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Receipt sheet */}
       <ReceiptSheet
         open={receiptOpen}
         onOpenChange={setReceiptOpen}
         saleId={receiptSaleId}
       />
 
-      {/* Custom range picker sheet */}
       <Sheet open={rangePickerOpen} onOpenChange={setRangePickerOpen}>
         <SheetContent side="bottom" className="rounded-t-2xl pb-8">
           <SheetHeader className="px-4 pt-4">
             <SheetTitle>Tarih Aralığı Seç</SheetTitle>
-            <SheetDescription>Başlangıç ve bitiş tarihlerini girin</SheetDescription>
+            <SheetDescription>
+              Başlangıç ve bitiş tarihlerini girin
+            </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-4 px-4 pt-4">
             <div>

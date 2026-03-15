@@ -13,8 +13,8 @@ import {
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
-import { formatTL } from "@/lib/cart";
-import type { Customer, Sale, SaleItem, DebtPayment } from "@/lib/types";
+import { formatTL, DEBT_PAYMENT_TYPE_LABELS } from "@/lib/cart";
+import type { Customer, DebtPaymentType, Sale, SaleItem, DebtPayment } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +45,7 @@ interface TimelineEntry {
   amount: number;
   description: string;
   saleItems?: SaleItem[];
+  paymentType?: DebtPaymentType;
 }
 
 function formatDateTR(date: Date): string {
@@ -131,6 +132,7 @@ export function CustomerDetail({
           type: "payment",
           amount: p.amount,
           description: p.note || "Ödeme",
+          paymentType: p.payment_type,
         });
       }
 
@@ -404,14 +406,25 @@ export function CustomerDetail({
                             className="flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors active:bg-accent"
                           >
                             <span className="text-base">
-                              {isPurchase ? "📦" : "✅"}
+                              {isPurchase
+                                ? "📦"
+                                : entry.paymentType
+                                  ? DEBT_PAYMENT_TYPE_LABELS[entry.paymentType].emoji
+                                  : "✅"}
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium">
-                                {entry.description}
+                                {isPurchase
+                                  ? entry.description
+                                  : entry.paymentType
+                                    ? `${DEBT_PAYMENT_TYPE_LABELS[entry.paymentType].label} Tahsilat`
+                                    : entry.description}
                               </p>
                               <p className="text-xs text-muted-foreground">
                                 {formatDateTR(entry.date)}
+                                {!isPurchase && entry.description !== "Ödeme" && (
+                                  <span className="ml-1">· {entry.description}</span>
+                                )}
                               </p>
                             </div>
                             <span

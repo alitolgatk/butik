@@ -66,6 +66,9 @@ create table debt_payments (
 -- İndirim sütunu
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount decimal(10,2) DEFAULT 0;
 
+-- Tahsilat ödeme tipi
+ALTER TABLE debt_payments ADD COLUMN IF NOT EXISTS payment_type text DEFAULT 'nakit';
+
 -- Renk sütunu (varyantlar için opsiyonel)
 ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS color_label text;
 

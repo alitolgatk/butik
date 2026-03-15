@@ -1,4 +1,4 @@
-import type { SaleType } from "./types";
+import type { DebtPaymentType, SaleType } from "./types";
 
 export interface CartItem {
   productId: string;
@@ -35,4 +35,10 @@ export const SALE_TYPE_LABELS: Record<SaleType, { label: string; emoji: string }
   havale: { label: "Havale", emoji: "🏦" },
   acik_hesap: { label: "Açık Hesap", emoji: "📒" },
   emanet: { label: "Emanet", emoji: "📦" },
+};
+
+export const DEBT_PAYMENT_TYPE_LABELS: Record<DebtPaymentType, { label: string; emoji: string }> = {
+  nakit: { label: "Nakit", emoji: "💵" },
+  kart: { label: "Kart", emoji: "💳" },
+  havale: { label: "Havale", emoji: "🏦" },
 };

@@ -5,8 +5,8 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
-import { formatTL } from "@/lib/cart";
-import type { Customer } from "@/lib/types";
+import { formatTL, DEBT_PAYMENT_TYPE_LABELS } from "@/lib/cart";
+import type { Customer, DebtPaymentType } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,8 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+
+const PAYMENT_TYPES: DebtPaymentType[] = ["nakit", "kart", "havale"];
 
 interface PaymentSheetProps {
   open: boolean;
@@ -31,12 +33,14 @@ export function PaymentSheet({
   customer,
   onPaid,
 }: PaymentSheetProps) {
+  const [paymentType, setPaymentType] = useState<DebtPaymentType>("nakit");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
 
   function handleOpen(isOpen: boolean) {
     if (isOpen) {
+      setPaymentType("nakit");
       setAmount("");
       setNote("");
     }
@@ -63,6 +67,7 @@ export function PaymentSheet({
         .insert({
           customer_id: customer.id,
           amount: num,
+          payment_type: paymentType,
           note: note.trim() || null,
         });
       if (payErr) throw payErr;
@@ -97,6 +102,37 @@ export function PaymentSheet({
             <p className="text-lg font-bold text-amber-800">
               {formatTL(customer.total_debt)}
             </p>
+          </div>
+
+          {/* Payment type tiles */}
+          <div>
+            <Label>Ödeme Tipi</Label>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {PAYMENT_TYPES.map((pt) => {
+                const info = DEBT_PAYMENT_TYPE_LABELS[pt];
+                const selected = paymentType === pt;
+                return (
+                  <button
+                    key={pt}
+                    onClick={() => setPaymentType(pt)}
+                    className={`flex flex-col items-center gap-1 rounded-xl border-2 px-2 py-3 text-center transition-colors ${
+                      selected
+                        ? "border-primary bg-primary/5"
+                        : "border-input bg-background active:bg-accent"
+                    }`}
+                  >
+                    <span className="text-xl">{info.emoji}</span>
+                    <span
+                      className={`text-xs font-medium ${
+                        selected ? "text-primary" : "text-muted-foreground"
+                      }`}
+                    >
+                      {info.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div>

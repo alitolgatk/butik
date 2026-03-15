@@ -49,10 +49,13 @@ export interface SaleItem {
   returned_quantity: number;
 }
 
+export type DebtPaymentType = "nakit" | "kart" | "havale";
+
 export interface DebtPayment {
   id: string;
   customer_id: string;
   amount: number;
+  payment_type: DebtPaymentType;
   note: string | null;
   created_at: string;
 }

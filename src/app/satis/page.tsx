@@ -45,6 +45,7 @@ export default function SatisPage() {
   const [selectedSaleType, setSelectedSaleType] = useState<SaleType | null>(null);
   const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [optionalCustomer, setOptionalCustomer] = useState<Customer | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const customerJustSelected = useRef(false);
 
@@ -237,6 +238,7 @@ export default function SatisPage() {
     setCart([]);
     setSelectedSaleType(null);
     setSelectedCustomer(null);
+    setOptionalCustomer(null);
     setSearch("");
     fetchProducts();
   }
@@ -518,6 +520,8 @@ export default function SatisPage() {
           items={cart}
           saleType={selectedSaleType}
           customer={selectedCustomer}
+          optionalCustomer={optionalCustomer}
+          onOptionalCustomerChange={setOptionalCustomer}
           onCompleted={handleSaleCompleted}
         />
       )}

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, Loader2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Loader2, Plus, Search, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
@@ -24,6 +24,8 @@ interface SaleSummaryProps {
   items: CartItem[];
   saleType: SaleType;
   customer: Customer | null;
+  optionalCustomer: Customer | null;
+  onOptionalCustomerChange: (c: Customer | null) => void;
   onCompleted: () => void;
 }
 
@@ -33,16 +35,96 @@ export function SaleSummary({
   items,
   saleType,
   customer,
+  optionalCustomer,
+  onOptionalCustomerChange,
   onCompleted,
 }: SaleSummaryProps) {
   const [saving, setSaving] = useState(false);
   const subtotal = cartTotal(items);
   const typeInfo = SALE_TYPE_LABELS[saleType];
 
+  const showOptionalCustomer =
+    saleType === "nakit" || saleType === "kart" || saleType === "havale";
+  const effectiveCustomer = customer ?? optionalCustomer;
+
   // Discount state
   const [showDiscount, setShowDiscount] = useState(false);
   const [discountMode, setDiscountMode] = useState<"percent" | "tl">("tl");
   const [discountInput, setDiscountInput] = useState("");
+
+  // Customer search state
+  const [custSearchOpen, setCustSearchOpen] = useState(false);
+  const [custQuery, setCustQuery] = useState("");
+  const [custResults, setCustResults] = useState<Customer[]>([]);
+  const [custSearching, setCustSearching] = useState(false);
+  const [showNewCust, setShowNewCust] = useState(false);
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustPhone, setNewCustPhone] = useState("");
+  const [creatingCust, setCreatingCust] = useState(false);
+
+  // Search customers
+  useEffect(() => {
+    if (!custSearchOpen || !custQuery.trim()) {
+      setCustResults([]);
+      return;
+    }
+    const timeout = setTimeout(async () => {
+      setCustSearching(true);
+      try {
+        const supabase = getSupabase();
+        const { data } = await supabase
+          .from("customers")
+          .select("*")
+          .ilike("name", `%${custQuery.trim()}%`)
+          .order("name")
+          .limit(10);
+        setCustResults((data ?? []) as Customer[]);
+      } catch {
+        // silent
+      } finally {
+        setCustSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [custQuery, custSearchOpen]);
+
+  function resetCustSearch() {
+    setCustSearchOpen(false);
+    setCustQuery("");
+    setCustResults([]);
+    setShowNewCust(false);
+    setNewCustName("");
+    setNewCustPhone("");
+  }
+
+  function selectCustomer(c: Customer) {
+    onOptionalCustomerChange(c);
+    resetCustSearch();
+  }
+
+  async function createAndSelect() {
+    if (!newCustName.trim()) return;
+    setCreatingCust(true);
+    try {
+      const supabase = getSupabase();
+      const { data, error } = await supabase
+        .from("customers")
+        .insert({
+          name: newCustName.trim(),
+          phone: newCustPhone.trim() || null,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      onOptionalCustomerChange(data as Customer);
+      resetCustSearch();
+      toast.success("Müşteri oluşturuldu");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Müşteri oluşturulamadı");
+    } finally {
+      setCreatingCust(false);
+    }
+  }
 
   const discountTL = (() => {
     const val = parseFloat(discountInput) || 0;
@@ -73,7 +155,7 @@ export function SaleSummary({
         .from("sales")
         .insert({
           type: saleType,
-          customer_id: customer?.id ?? null,
+          customer_id: effectiveCustomer?.id ?? null,
           total_amount: finalTotal,
           discount_amount: discountTL,
           status: saleStatus,
@@ -113,7 +195,9 @@ export function SaleSummary({
             if (current) {
               await supabase
                 .from("product_variants")
-                .update({ stock: Math.max(0, current.stock - item.quantity) })
+                .update({
+                  stock: Math.max(0, current.stock - item.quantity),
+                })
                 .eq("id", item.variantId);
             }
           }
@@ -122,7 +206,10 @@ export function SaleSummary({
             .select("stock")
             .eq("product_id", item.productId);
           if (allVariants) {
-            const totalStock = allVariants.reduce((s, v) => s + v.stock, 0);
+            const totalStock = allVariants.reduce(
+              (s, v) => s + v.stock,
+              0
+            );
             await supabase
               .from("products")
               .update({ stock: totalStock })
@@ -137,7 +224,9 @@ export function SaleSummary({
           if (current) {
             await supabase
               .from("products")
-              .update({ stock: Math.max(0, current.stock - item.quantity) })
+              .update({
+                stock: Math.max(0, current.stock - item.quantity),
+              })
               .eq("id", item.productId);
           }
         }
@@ -153,17 +242,22 @@ export function SaleSummary({
         if (cust) {
           await supabase
             .from("customers")
-            .update({ total_debt: Number(cust.total_debt) + finalTotal })
+            .update({
+              total_debt: Number(cust.total_debt) + finalTotal,
+            })
             .eq("id", customer.id);
         }
       }
 
       toast.success("Satış tamamlandı ✓");
       clearDiscount();
+      onOptionalCustomerChange(null);
       onOpenChange(false);
       onCompleted();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Satış kaydedilemedi");
+      toast.error(
+        err instanceof Error ? err.message : "Satış kaydedilemedi"
+      );
     } finally {
       setSaving(false);
     }
@@ -177,7 +271,9 @@ export function SaleSummary({
       >
         <SheetHeader className="px-4 pt-4">
           <SheetTitle>Satış Özeti</SheetTitle>
-          <SheetDescription>Satışı onaylamadan önce kontrol edin</SheetDescription>
+          <SheetDescription>
+            Satışı onaylamadan önce kontrol edin
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto px-4 pt-3">
@@ -185,11 +281,11 @@ export function SaleSummary({
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-secondary px-3 py-2">
             <span className="text-lg">{typeInfo.emoji}</span>
             <span className="text-sm font-semibold">{typeInfo.label}</span>
-            {customer && (
+            {effectiveCustomer && (
               <>
                 <span className="text-muted-foreground">•</span>
                 <span className="text-sm text-muted-foreground">
-                  {customer.name}
+                  {effectiveCustomer.name}
                 </span>
               </>
             )}
@@ -222,6 +318,141 @@ export function SaleSummary({
             ))}
           </div>
 
+          {/* Optional customer section — only for nakit/kart/havale */}
+          {showOptionalCustomer && (
+            <div className="mt-3">
+              {optionalCustomer ? (
+                <div className="flex items-center justify-between rounded-lg border bg-card px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <UserRound className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {optionalCustomer.name}
+                      </p>
+                      {optionalCustomer.phone && (
+                        <p className="text-xs text-muted-foreground">
+                          {optionalCustomer.phone}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onOptionalCustomerChange(null)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : !custSearchOpen ? (
+                <button
+                  onClick={() => setCustSearchOpen(true)}
+                  className="flex w-full items-center gap-2 rounded-lg border-2 border-dashed border-input px-3 py-2.5 text-sm text-muted-foreground transition-colors active:border-primary active:text-primary"
+                >
+                  <Search className="h-4 w-4" />
+                  Müşteri ara veya ekle... (opsiyonel)
+                </button>
+              ) : (
+                <div className="rounded-lg border bg-card p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      Müşteri (opsiyonel)
+                    </span>
+                    <button
+                      onClick={resetCustSearch}
+                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-destructive"
+                    >
+                      <X className="h-3 w-3" />
+                      Kapat
+                    </button>
+                  </div>
+
+                  <div className="relative mt-2">
+                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Müşteri adı..."
+                      value={custQuery}
+                      onChange={(e) => setCustQuery(e.target.value)}
+                      className="h-9 pl-8 text-sm"
+                      autoFocus
+                    />
+                  </div>
+
+                  {custSearching && (
+                    <div className="flex items-center justify-center py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+
+                  {!custSearching && custResults.length > 0 && (
+                    <div className="mt-2 flex max-h-32 flex-col gap-0.5 overflow-y-auto">
+                      {custResults.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => selectCustomer(c)}
+                          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors active:bg-accent"
+                        >
+                          <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span>{c.name}</span>
+                          {c.phone && (
+                            <span className="text-xs text-muted-foreground">
+                              {c.phone}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {!custSearching &&
+                    custQuery.trim() &&
+                    custResults.length === 0 && (
+                      <p className="mt-2 text-center text-xs text-muted-foreground">
+                        Sonuç bulunamadı
+                      </p>
+                    )}
+
+                  {/* New customer form */}
+                  {!showNewCust ? (
+                    <button
+                      onClick={() => setShowNewCust(true)}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed py-2 text-xs font-medium text-primary transition-colors active:bg-accent"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Yeni Müşteri Ekle
+                    </button>
+                  ) : (
+                    <div className="mt-2 flex flex-col gap-2 rounded-md border bg-muted/30 p-2.5">
+                      <Input
+                        placeholder="Ad Soyad *"
+                        value={newCustName}
+                        onChange={(e) => setNewCustName(e.target.value)}
+                        className="h-9 text-sm"
+                        autoFocus
+                      />
+                      <Input
+                        placeholder="Telefon (opsiyonel)"
+                        value={newCustPhone}
+                        onChange={(e) => setNewCustPhone(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                      <Button
+                        onClick={createAndSelect}
+                        disabled={!newCustName.trim() || creatingCust}
+                        size="sm"
+                        className="h-8 text-xs"
+                      >
+                        {creatingCust ? (
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        ) : null}
+                        Kaydet
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Discount section */}
           <div className="mt-3">
             {!showDiscount ? (
@@ -245,7 +476,6 @@ export function SaleSummary({
                 </div>
 
                 <div className="mt-2 flex items-center gap-2">
-                  {/* Mode toggle */}
                   <div className="flex shrink-0 overflow-hidden rounded-md border">
                     <button
                       onClick={() => setDiscountMode("percent")}
