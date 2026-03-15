@@ -159,6 +159,7 @@ export function SaleSummary({
           total_amount: finalTotal,
           discount_amount: discountTL,
           status: saleStatus,
+          is_emanet: isEmanet,
         })
         .select("id")
         .single();

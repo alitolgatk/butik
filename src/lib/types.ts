@@ -34,6 +34,7 @@ export interface Sale {
   total_amount: number;
   discount_amount: number;
   status: SaleStatus;
+  is_emanet: boolean;
   notes: string | null;
   created_at: string;
 }

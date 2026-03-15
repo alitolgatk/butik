@@ -69,6 +69,10 @@ ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount decimal(10,2) DEFAULT
 -- Tahsilat ödeme tipi
 ALTER TABLE debt_payments ADD COLUMN IF NOT EXISTS payment_type text DEFAULT 'nakit';
 
+-- Emanet bayrak sütunu
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_emanet boolean DEFAULT false;
+UPDATE sales SET is_emanet = true WHERE type = 'emanet';
+
 -- Renk sütunu (varyantlar için opsiyonel)
 ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS color_label text;
 

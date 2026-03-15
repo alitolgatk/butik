@@ -16,6 +16,8 @@ interface EmanetRow {
   itemCount: number;
   totalAmount: number;
   status: "open" | "completed";
+  returnedCount?: number;
+  soldCount?: number;
 }
 
 function formatDateTR(date: Date): string {
@@ -51,63 +53,32 @@ export default function EmanetPage() {
         supabase
           .from("sales")
           .select("id, customer_id, total_amount, status, created_at, type")
+          .eq("is_emanet", true)
           .eq("status", "completed")
           .order("created_at", { ascending: false }),
       ]);
 
-      // For completed emanets, we check if any sale_items have returned_quantity > 0
-      // That's a strong signal it was an emanet. OR we can store a note.
-      // Simplest reliable approach: check if sale_items have returned_quantity set.
-      const completedSales = (completedRes.data ?? []) as (Sale & Record<string, unknown>)[];
-
-      // Get items for completed sales that might be emanets
-      let completedEmanetIds: string[] = [];
-      if (completedSales.length > 0) {
-        const { data: itemsWithReturns } = await supabase
-          .from("sale_items")
-          .select("sale_id")
-          .gt("returned_quantity", 0);
-
-        const returnedSaleIds = new Set(
-          (itemsWithReturns ?? []).map((i: { sale_id: string }) => i.sale_id)
-        );
-
-        // Also include completed sales where total_amount = 0 (all returned)
-        // and any that were from emanet origin (returned_quantity > 0 on any item)
-        completedEmanetIds = completedSales
-          .filter((s) => returnedSaleIds.has(s.id))
-          .map((s) => s.id);
-
-        // Also: some emanets may have 0 returns (customer kept everything).
-        // We can't perfectly distinguish these. Let's also include sales
-        // that have the emanet type originally. Since type changes on close,
-        // we'll use a notes-based approach or just show returned_quantity ones.
-        // For best UX, let's also store a marker. For now, returned_quantity > 0
-        // is our signal, plus we already show open emanets correctly.
-      }
-
-      // Gather all sale IDs
       const activeSales = (activeRes.data ?? []) as Sale[];
-      const allSaleIds = [
-        ...activeSales.map((s) => s.id),
-        ...completedEmanetIds,
-      ];
+      const completedSales = (completedRes.data ?? []) as Sale[];
+      const allSales = [...activeSales, ...completedSales];
 
-      if (allSaleIds.length === 0) {
+      if (allSales.length === 0) {
         setRows([]);
         setLoading(false);
         return;
       }
 
-      // Get customer names
+      const allSaleIds = allSales.map((s) => s.id);
+      const completedIds = completedSales.map((s) => s.id);
+
+      // Customer names
       const customerIds = Array.from(
         new Set(
-          [...activeSales, ...completedSales.filter((s) => completedEmanetIds.includes(s.id))]
+          allSales
             .map((s) => s.customer_id)
             .filter(Boolean) as string[]
         )
       );
-
       const customerMap: Record<string, string> = {};
       if (customerIds.length > 0) {
         const { data: customers } = await supabase
@@ -119,16 +90,26 @@ export default function EmanetPage() {
         }
       }
 
-      // Get item counts per sale
-      const { data: itemCounts } = await supabase
+      // Fetch sale_items for all emanets
+      const { data: allItems } = await supabase
         .from("sale_items")
-        .select("sale_id, quantity")
+        .select("sale_id, quantity, returned_quantity")
         .in("sale_id", allSaleIds);
 
-      const countMap: Record<string, number> = {};
-      for (const item of itemCounts ?? []) {
-        const sid = (item as { sale_id: string; quantity: number }).sale_id;
-        countMap[sid] = (countMap[sid] || 0) + (item as { quantity: number }).quantity;
+      const itemCountMap: Record<string, number> = {};
+      const returnedMap: Record<string, number> = {};
+      const soldMap: Record<string, number> = {};
+
+      for (const raw of allItems ?? []) {
+        const item = raw as { sale_id: string; quantity: number; returned_quantity: number };
+        const sid = item.sale_id;
+        itemCountMap[sid] = (itemCountMap[sid] ?? 0) + item.quantity;
+
+        if (completedIds.includes(sid)) {
+          const ret = item.returned_quantity ?? 0;
+          returnedMap[sid] = (returnedMap[sid] ?? 0) + ret;
+          soldMap[sid] = (soldMap[sid] ?? 0) + (item.quantity - ret);
+        }
       }
 
       // Build rows
@@ -137,24 +118,28 @@ export default function EmanetPage() {
       for (const s of activeSales) {
         result.push({
           id: s.id,
-          customerName: s.customer_id ? (customerMap[s.customer_id] ?? "Bilinmeyen") : "Müşteri yok",
+          customerName: s.customer_id
+            ? (customerMap[s.customer_id] ?? "Bilinmeyen")
+            : "Müşteri yok",
           date: new Date(s.created_at),
-          itemCount: countMap[s.id] ?? 0,
+          itemCount: itemCountMap[s.id] ?? 0,
           totalAmount: s.total_amount,
           status: "open",
         });
       }
 
-      for (const sid of completedEmanetIds) {
-        const s = completedSales.find((x) => x.id === sid);
-        if (!s) continue;
+      for (const s of completedSales) {
         result.push({
           id: s.id,
-          customerName: s.customer_id ? (customerMap[s.customer_id] ?? "Bilinmeyen") : "Müşteri yok",
+          customerName: s.customer_id
+            ? (customerMap[s.customer_id] ?? "Bilinmeyen")
+            : "Müşteri yok",
           date: new Date(s.created_at),
-          itemCount: countMap[s.id] ?? 0,
+          itemCount: itemCountMap[s.id] ?? 0,
           totalAmount: s.total_amount,
           status: "completed",
+          returnedCount: returnedMap[s.id] ?? 0,
+          soldCount: soldMap[s.id] ?? 0,
         });
       }
 
@@ -213,6 +198,11 @@ export default function EmanetPage() {
             )}
           >
             Geçmiş
+            {historyRows.length > 0 && (
+              <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted-foreground/20 px-1.5 text-xs font-semibold text-muted-foreground">
+                {historyRows.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -255,10 +245,35 @@ export default function EmanetPage() {
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {formatDateTR(row.date)} · {row.itemCount} ürün
                   </p>
+                  {row.status === "completed" && (
+                    <p className="mt-0.5 text-xs">
+                      {row.soldCount === 0 ? (
+                        <span className="text-amber-600">
+                          ↩ Tamamı iade edildi
+                        </span>
+                      ) : row.returnedCount === 0 ? (
+                        <span className="text-emerald-600">
+                          ✓ Tamamı satıldı
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-amber-600">
+                            ↩ {row.returnedCount} iade
+                          </span>
+                          <span className="mx-1 text-muted-foreground">·</span>
+                          <span className="text-emerald-600">
+                            ✓ {row.soldCount} satıldı
+                          </span>
+                        </>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <span
                   className={`shrink-0 text-sm font-bold ${
-                    row.status === "open" ? "text-violet-600" : "text-emerald-600"
+                    row.status === "open"
+                      ? "text-violet-600"
+                      : "text-emerald-600"
                   }`}
                 >
                   {formatTL(row.totalAmount)}

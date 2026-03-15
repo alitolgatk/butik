@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CreditCard,
   PackageCheck,
+  Wallet,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ interface DashboardData {
   todaySalesTotal: number;
   activeDebtCount: number;
   activeEmanetCount: number;
+  totalReceivables: number;
 }
 
 type FeedEntry =
@@ -67,6 +69,7 @@ interface StatsData {
   totalRevenue: number;
   saleCount: number;
   breakdown: { type: SaleType; total: number }[];
+  debtCollection: number;
 }
 
 const BREAKDOWN_COLORS: Partial<Record<SaleType, string>> = {
@@ -84,6 +87,7 @@ export default function HomePage() {
     todaySalesTotal: 0,
     activeDebtCount: 0,
     activeEmanetCount: 0,
+    totalReceivables: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +115,7 @@ export default function HomePage() {
     totalRevenue: 0,
     saleCount: 0,
     breakdown: [],
+    debtCollection: 0,
   });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -129,7 +134,7 @@ export default function HomePage() {
               .select("total_amount")
               .gte("created_at", todayStart.toISOString())
               .neq("type", "emanet"),
-            supabase.from("customers").select("id").gt("total_debt", 0),
+            supabase.from("customers").select("id, total_debt").gt("total_debt", 0),
             supabase
               .from("sales")
               .select("id")
@@ -154,11 +159,18 @@ export default function HomePage() {
           0
         );
 
+        const debtCustomers = (debtRes.data ?? []) as { id: string; total_debt: number }[];
+        const totalReceivables = debtCustomers.reduce(
+          (sum, c) => sum + Number(c.total_debt),
+          0
+        );
+
         setData({
           todaySalesCount: sales.length,
           todaySalesTotal: totalAmount,
-          activeDebtCount: debtRes.data?.length ?? 0,
+          activeDebtCount: debtCustomers.length,
           activeEmanetCount: emanetRes.data?.length ?? 0,
+          totalReceivables,
         });
 
         // Gather all customer IDs from both sources
@@ -176,6 +188,7 @@ export default function HomePage() {
           customer_id: string;
           note: string | null;
           payment_type: DebtPaymentType | null;
+          remaining_balance: number | null;
         }[];
 
         const allCustIds = Array.from(
@@ -256,17 +269,24 @@ export default function HomePage() {
     setStatsLoading(true);
     try {
       const supabase = getSupabase();
-      const { data, error } = await supabase
-        .from("sales")
-        .select("type, total_amount")
-        .eq("status", "completed")
-        .gte("created_at", statsPeriod.from)
-        .lte("created_at", statsPeriod.to)
-        .gt("total_amount", 0);
+      const [salesResult, debtPayResult] = await Promise.all([
+        supabase
+          .from("sales")
+          .select("type, total_amount")
+          .eq("status", "completed")
+          .gte("created_at", statsPeriod.from)
+          .lte("created_at", statsPeriod.to)
+          .gt("total_amount", 0),
+        supabase
+          .from("debt_payments")
+          .select("amount")
+          .gte("created_at", statsPeriod.from)
+          .lte("created_at", statsPeriod.to),
+      ]);
 
-      if (error) throw error;
+      if (salesResult.error) throw salesResult.error;
 
-      const rows = (data ?? []) as { type: SaleType; total_amount: number }[];
+      const rows = (salesResult.data ?? []) as { type: SaleType; total_amount: number }[];
       const totalRevenue = rows.reduce((s, r) => s + Number(r.total_amount), 0);
       const typeMap: Partial<Record<SaleType, number>> = {};
       for (const r of rows) {
@@ -276,7 +296,12 @@ export default function HomePage() {
         .map(([type, total]) => ({ type: type as SaleType, total: total as number }))
         .sort((a, b) => b.total - a.total);
 
-      setStats({ totalRevenue, saleCount: rows.length, breakdown });
+      const debtCollection = (debtPayResult.data ?? []).reduce(
+        (s, r) => s + Number((r as { amount: number }).amount),
+        0
+      );
+
+      setStats({ totalRevenue, saleCount: rows.length, breakdown, debtCollection });
     } catch {
       // silent
     } finally {
@@ -357,7 +382,7 @@ export default function HomePage() {
         )}
 
         {/* Summary cards */}
-        <div className="grid gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <SummaryCard
             icon={<CreditCard className="h-5 w-5 text-emerald-600" />}
             title="Bugünkü Satışlar"
@@ -367,8 +392,16 @@ export default function HomePage() {
             bgClass="bg-emerald-50"
           />
           <SummaryCard
+            icon={<Wallet className="h-5 w-5 text-red-600" />}
+            title="Toplam Alacak"
+            loading={loading && !error}
+            primaryValue={formatTL(data.totalReceivables)}
+            secondaryValue={`${data.activeDebtCount} müşteri`}
+            bgClass="bg-red-50"
+          />
+          <SummaryCard
             icon={<BookOpen className="h-5 w-5 text-amber-600" />}
-            title="Aktif Açık Hesaplar"
+            title="Açık Hesaplar"
             loading={loading && !error}
             primaryValue={`${data.activeDebtCount}`}
             secondaryValue="müşteri"
@@ -439,7 +472,7 @@ export default function HomePage() {
             <Card className="mt-3 border-0 shadow-sm">
               <CardContent className="p-4">
                 <p className="mb-3 text-xs font-semibold text-muted-foreground">
-                  Tahsilat Dağılımı
+                  Satış Dağılımı
                 </p>
                 <div className="flex flex-col gap-3">
                   {stats.breakdown.map((b) => {
@@ -470,6 +503,20 @@ export default function HomePage() {
                     );
                   })}
                 </div>
+
+                {stats.debtCollection > 0 && (
+                  <>
+                    <div className="my-3 border-t border-dashed" />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        ✅ Cari Tahsilat
+                      </span>
+                      <span className="font-semibold text-emerald-600">
+                        {formatTL(stats.debtCollection)}
+                      </span>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           )}
