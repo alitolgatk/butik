@@ -13,6 +13,43 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 
+// ─── Size sort ───
+
+const SIZE_ORDER = [
+  "STD", "XS", "S", "M", "L", "XL", "XXL", "XXXL",
+  "34", "36", "38", "40", "42", "44", "46", "48", "50",
+];
+
+function sizeOrderIndex(label: string): number {
+  if (!label) return 99999;
+  const trimmed = label.trim();
+  const idx = SIZE_ORDER.indexOf(trimmed);
+  if (idx !== -1) return idx;
+  const upper = trimmed.toUpperCase();
+  const idxU = SIZE_ORDER.indexOf(upper);
+  if (idxU !== -1) return idxU;
+  const num = parseInt(trimmed);
+  if (!isNaN(num)) {
+    for (let i = 0; i < SIZE_ORDER.length; i++) {
+      const n = parseInt(SIZE_ORDER[i]);
+      if (!isNaN(n) && num < n) return i - 0.5;
+    }
+    return SIZE_ORDER.length;
+  }
+  return SIZE_ORDER.length + 1000;
+}
+
+function sortVariantsBySize(items: ProductVariant[]): ProductVariant[] {
+  return [...items].sort((a, b) => {
+    const diff =
+      sizeOrderIndex(a.size_label) - sizeOrderIndex(b.size_label);
+    if (diff !== 0) return diff;
+    return (a.size_label ?? "").localeCompare(b.size_label ?? "", "tr");
+  });
+}
+
+// ─── Component ───
+
 interface VariantPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -52,21 +89,23 @@ export function VariantPicker({
 
   const sizesForColor = useMemo(() => {
     if (selectedColor === null) return [];
-    return variants.filter((v) => v.color_label === selectedColor);
+    return sortVariantsBySize(
+      variants.filter((v) => v.color_label === selectedColor)
+    );
   }, [variants, selectedColor]);
 
-  // For no-color products, just show the size grid directly
   const sizeOnlyVariants = useMemo(() => {
     if (hasColors) return [];
-    return variants;
+    return sortVariantsBySize(variants);
   }, [variants, hasColors]);
 
   function handleColorTap(colorName: string) {
-    const colorVariants = variants.filter((v) => v.color_label === colorName);
+    const colorVariants = variants.filter(
+      (v) => v.color_label === colorName
+    );
     const hasSizes = colorVariants.some((v) => v.size_label);
 
     if (!hasSizes && colorVariants.length === 1) {
-      // Color-only variant (no sizes), select directly
       if (colorVariants[0].stock <= 0) {
         toast.warning(`${colorName} stoku tükenmiş, yine de eklendi`);
       }
@@ -145,7 +184,9 @@ export function VariantPicker({
                       : "border-amber-200 bg-amber-50"
                   }`}
                 >
-                  <span className={`text-base ${!inStock ? "text-amber-800" : ""}`}>
+                  <span
+                    className={`text-base ${!inStock ? "text-amber-800" : ""}`}
+                  >
                     {c.name}
                   </span>
                   <span
@@ -163,7 +204,7 @@ export function VariantPicker({
           </div>
         )}
 
-        {/* ── Step 2: Size grid for selected color ── */}
+        {/* ── Step 2: Size grid for selected color (sorted) ── */}
         {showSizeStep && (
           <>
             <div className="mt-4 grid grid-cols-3 gap-2 px-4">
@@ -180,7 +221,11 @@ export function VariantPicker({
                         : "border-amber-200 bg-amber-50"
                     }`}
                   >
-                    <span className={`text-base ${!inStock ? "text-amber-800" : ""}`}>
+                    <span
+                      className={`text-base ${
+                        !inStock ? "text-amber-800" : ""
+                      }`}
+                    >
                       {label}
                     </span>
                     <span
@@ -205,7 +250,7 @@ export function VariantPicker({
           </>
         )}
 
-        {/* ── Size-only (no colors) ── */}
+        {/* ── Size-only (no colors, sorted) ── */}
         {showSizeOnly && (
           <>
             <div className="mt-4 grid grid-cols-3 gap-2 px-4">
@@ -221,7 +266,11 @@ export function VariantPicker({
                         : "border-amber-200 bg-amber-50"
                     }`}
                   >
-                    <span className={`text-base ${!inStock ? "text-amber-800" : ""}`}>
+                    <span
+                      className={`text-base ${
+                        !inStock ? "text-amber-800" : ""
+                      }`}
+                    >
                       {v.size_label || "—"}
                     </span>
                     <span
