@@ -17,6 +17,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import type { PaymentReceiptData } from "./payment-receipt-sheet";
 
 const PAYMENT_TYPES: DebtPaymentType[] = ["nakit", "kart", "havale"];
 
@@ -24,7 +25,7 @@ interface PaymentSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   customer: Customer;
-  onPaid: () => void;
+  onPaid: (receipt: PaymentReceiptData) => void;
 }
 
 export function PaymentSheet({
@@ -69,18 +70,29 @@ export function PaymentSheet({
           amount: num,
           payment_type: paymentType,
           note: note.trim() || null,
+          remaining_balance: Math.max(0, customer.total_debt - num),
         });
       if (payErr) throw payErr;
 
+      const newBalance = Math.max(0, customer.total_debt - num);
+
       const { error: custErr } = await supabase
         .from("customers")
-        .update({ total_debt: Math.max(0, customer.total_debt - num) })
+        .update({ total_debt: newBalance })
         .eq("id", customer.id);
       if (custErr) throw custErr;
 
       toast.success("Ödeme kaydedildi ✓");
-      onPaid();
       onOpenChange(false);
+      onPaid({
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        date: new Date(),
+        paymentType,
+        amount: num,
+        remainingBalance: newBalance,
+        note: note.trim() || null,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Ödeme kaydedilemedi");
     } finally {

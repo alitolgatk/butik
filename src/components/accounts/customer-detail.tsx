@@ -37,6 +37,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { PaymentSheet } from "./payment-sheet";
+import {
+  PaymentReceiptSheet,
+  type PaymentReceiptData,
+} from "./payment-receipt-sheet";
 
 interface TimelineEntry {
   id: string;
@@ -83,6 +87,12 @@ export function CustomerDetail({
   // Payment sheet
   const [paymentOpen, setPaymentOpen] = useState(false);
 
+  // Payment receipt
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptData, setReceiptData] = useState<PaymentReceiptData | null>(
+    null
+  );
+
   const fetchData = useCallback(async () => {
     if (!customerId) return;
     setLoading(true);
@@ -112,7 +122,9 @@ export function CustomerDetail({
 
       const entries: TimelineEntry[] = [];
 
-      const sales = (salesRes.data ?? []) as (Sale & { sale_items: SaleItem[] })[];
+      const sales = (salesRes.data ?? []) as (Sale & {
+        sale_items: SaleItem[];
+      })[];
       for (const sale of sales) {
         entries.push({
           id: `sale-${sale.id}`,
@@ -153,9 +165,25 @@ export function CustomerDetail({
     }
   }, [open, customerId, fetchData]);
 
-  function handlePaymentDone() {
+  function handlePaymentDone(receipt: PaymentReceiptData) {
     fetchData();
     onUpdated();
+    setReceiptData(receipt);
+    setReceiptOpen(true);
+  }
+
+  function handleTimelinePaymentTap(entry: TimelineEntry) {
+    if (!customer) return;
+    setReceiptData({
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      date: entry.date,
+      paymentType: entry.paymentType ?? "nakit",
+      amount: entry.amount,
+      remainingBalance: null,
+      note: entry.description !== "Ödeme" ? entry.description : null,
+    });
+    setReceiptOpen(true);
   }
 
   async function handleEditSave() {
@@ -221,7 +249,9 @@ export function CustomerDetail({
         >
           <SheetHeader className="px-4 pt-4">
             <SheetTitle>{customer?.name ?? "Müşteri"}</SheetTitle>
-            <SheetDescription className="sr-only">Müşteri detayları</SheetDescription>
+            <SheetDescription className="sr-only">
+              Müşteri detayları
+            </SheetDescription>
           </SheetHeader>
 
           {loading ? (
@@ -243,9 +273,7 @@ export function CustomerDetail({
                   {/* Debt display */}
                   <div
                     className={`rounded-xl px-4 py-3 text-center ${
-                      customer.total_debt > 0
-                        ? "bg-red-50"
-                        : "bg-emerald-50"
+                      customer.total_debt > 0 ? "bg-red-50" : "bg-emerald-50"
                     }`}
                   >
                     <p
@@ -401,6 +429,8 @@ export function CustomerDetail({
                                 setExpandedSale(
                                   isExpanded ? null : entry.id
                                 );
+                              } else if (!isPurchase) {
+                                handleTimelinePaymentTap(entry);
                               }
                             }}
                             className="flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors active:bg-accent"
@@ -409,7 +439,8 @@ export function CustomerDetail({
                               {isPurchase
                                 ? "📦"
                                 : entry.paymentType
-                                  ? DEBT_PAYMENT_TYPE_LABELS[entry.paymentType].emoji
+                                  ? DEBT_PAYMENT_TYPE_LABELS[entry.paymentType]
+                                      .emoji
                                   : "✅"}
                             </span>
                             <div className="min-w-0 flex-1">
@@ -422,14 +453,19 @@ export function CustomerDetail({
                               </p>
                               <p className="text-xs text-muted-foreground">
                                 {formatDateTR(entry.date)}
-                                {!isPurchase && entry.description !== "Ödeme" && (
-                                  <span className="ml-1">· {entry.description}</span>
-                                )}
+                                {!isPurchase &&
+                                  entry.description !== "Ödeme" && (
+                                    <span className="ml-1">
+                                      · {entry.description}
+                                    </span>
+                                  )}
                               </p>
                             </div>
                             <span
                               className={`text-sm font-semibold ${
-                                isPurchase ? "text-red-600" : "text-emerald-600"
+                                isPurchase
+                                  ? "text-red-600"
+                                  : "text-emerald-600"
                               }`}
                             >
                               {isPurchase ? "+" : "-"}
@@ -437,13 +473,12 @@ export function CustomerDetail({
                             </span>
                             {isPurchase &&
                               entry.saleItems &&
-                              entry.saleItems.length > 0 && (
-                                isExpanded ? (
-                                  <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                ) : (
-                                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                )
-                              )}
+                              entry.saleItems.length > 0 &&
+                              (isExpanded ? (
+                                <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              ))}
                           </button>
 
                           {/* Expanded sale items */}
@@ -456,7 +491,8 @@ export function CustomerDetail({
                                 >
                                   <span className="text-muted-foreground">
                                     {si.product_name}
-                                    {si.variant_label && ` (${si.variant_label})`}
+                                    {si.variant_label &&
+                                      ` (${si.variant_label})`}
                                     {" × "}
                                     {si.quantity}
                                   </span>
@@ -487,6 +523,13 @@ export function CustomerDetail({
           onPaid={handlePaymentDone}
         />
       )}
+
+      {/* Payment receipt */}
+      <PaymentReceiptSheet
+        open={receiptOpen}
+        onOpenChange={setReceiptOpen}
+        data={receiptData}
+      />
     </>
   );
 }

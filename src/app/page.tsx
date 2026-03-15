@@ -19,6 +19,7 @@ import { getSupabase } from "@/lib/supabase";
 import { formatTL, SALE_TYPE_LABELS, DEBT_PAYMENT_TYPE_LABELS } from "@/lib/cart";
 import type { DebtPaymentType, SaleType } from "@/lib/types";
 import { ReceiptSheet } from "@/components/receipt-sheet";
+import { PaymentReceiptSheet, type PaymentReceiptData } from "@/components/accounts/payment-receipt-sheet";
 import {
   Sheet,
   SheetContent,
@@ -60,7 +61,7 @@ interface DashboardData {
 
 type FeedEntry =
   | { kind: "sale"; id: string; type: SaleType; total_amount: number; created_at: string; customer_name: string | null }
-  | { kind: "payment"; id: string; amount: number; created_at: string; customer_name: string | null; note: string | null; payment_type: DebtPaymentType | null };
+  | { kind: "payment"; id: string; amount: number; created_at: string; customer_name: string | null; note: string | null; payment_type: DebtPaymentType | null; remaining_balance: number | null };
 
 interface StatsData {
   totalRevenue: number;
@@ -142,7 +143,7 @@ export default function HomePage() {
               .limit(10),
             supabase
               .from("debt_payments")
-              .select("id, amount, created_at, customer_id, note, payment_type")
+              .select("id, amount, created_at, customer_id, note, payment_type, remaining_balance")
               .order("created_at", { ascending: false })
               .limit(10),
           ]);
@@ -212,6 +213,7 @@ export default function HomePage() {
           customer_name: r.customer_id ? nameMap[r.customer_id] ?? null : null,
           note: r.note,
           payment_type: r.payment_type,
+          remaining_balance: r.remaining_balance != null ? Number(r.remaining_balance) : null,
         }));
 
         const merged = [...saleEntries, ...paymentEntries]
@@ -316,6 +318,22 @@ export default function HomePage() {
   function openReceipt(saleId: string) {
     setReceiptSaleId(saleId);
     setReceiptOpen(true);
+  }
+
+  const [payReceiptOpen, setPayReceiptOpen] = useState(false);
+  const [payReceiptData, setPayReceiptData] = useState<PaymentReceiptData | null>(null);
+
+  function openPaymentReceipt(entry: Extract<FeedEntry, { kind: "payment" }>) {
+    setPayReceiptData({
+      customerName: entry.customer_name ?? "Müşteri",
+      customerPhone: null,
+      date: new Date(entry.created_at),
+      paymentType: entry.payment_type ?? "nakit",
+      amount: entry.amount,
+      remainingBalance: entry.remaining_balance,
+      note: entry.note,
+    });
+    setPayReceiptOpen(true);
   }
 
   // ─── Render ───
@@ -506,9 +524,10 @@ export default function HomePage() {
                     </span>
                   </button>
                 ) : (
-                  <div
+                  <button
                     key={`p-${entry.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-2.5"
+                    onClick={() => openPaymentReceipt(entry)}
+                    className="flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
                   >
                     <div className="flex items-center gap-2.5">
                       <span className="text-base">
@@ -538,7 +557,7 @@ export default function HomePage() {
                     <span className="text-sm font-bold text-emerald-600">
                       {formatTL(entry.amount)}
                     </span>
-                  </div>
+                  </button>
                 )
               )}
             </div>
@@ -550,6 +569,12 @@ export default function HomePage() {
         open={receiptOpen}
         onOpenChange={setReceiptOpen}
         saleId={receiptSaleId}
+      />
+
+      <PaymentReceiptSheet
+        open={payReceiptOpen}
+        onOpenChange={setPayReceiptOpen}
+        data={payReceiptData}
       />
 
       <Sheet open={rangePickerOpen} onOpenChange={setRangePickerOpen}>
