@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Minus, Plus, RotateCcw } from "lucide-react";
+import {
+  Banknote,
+  CheckCircle2,
+  Loader2,
+  Minus,
+  Plus,
+  RotateCcw,
+  UserCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
@@ -16,8 +24,11 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 
+type RefundMethod = "cash" | "credit";
+
 interface ReturnableItem {
   saleItemId: string;
+  saleId: string;
   productId: string;
   productName: string;
   variantLabel: string | null;
@@ -43,6 +54,7 @@ export function ReturnSheet({
   const [items, setItems] = useState<ReturnableItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refundMethod, setRefundMethod] = useState<RefundMethod | null>(null);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -50,7 +62,7 @@ export function ReturnSheet({
       const supabase = getSupabase();
       const { data: salesData } = await supabase
         .from("sales")
-        .select("id, sale_items(*)")
+        .select("id, total_amount, sale_items(*)")
         .eq("customer_id", customer.id)
         .eq("status", "completed");
 
@@ -58,6 +70,7 @@ export function ReturnSheet({
 
       for (const sale of (salesData ?? []) as {
         id: string;
+        total_amount: number;
         sale_items: SaleItem[];
       }[]) {
         for (const si of sale.sale_items) {
@@ -65,6 +78,7 @@ export function ReturnSheet({
           if (available > 0) {
             returnable.push({
               saleItemId: si.id,
+              saleId: sale.id,
               productId: si.product_id,
               productName: si.product_name,
               variantLabel: si.variant_label,
@@ -86,7 +100,10 @@ export function ReturnSheet({
   }, [customer.id]);
 
   useEffect(() => {
-    if (open) fetchItems();
+    if (open) {
+      setRefundMethod(null);
+      fetchItems();
+    }
   }, [open, fetchItems]);
 
   function setQty(idx: number, qty: number) {
@@ -117,7 +134,6 @@ export function ReturnSheet({
     if (variantLabel) {
       let matched = false;
 
-      // Color + size variant (e.g. "Kırmızı / M")
       if (variantLabel.includes(" / ")) {
         const [colorPart, ...sizeParts] = variantLabel.split(" / ");
         const sizePart = sizeParts.join(" / ");
@@ -137,7 +153,6 @@ export function ReturnSheet({
         }
       }
 
-      // Fallback: size-only match
       if (!matched) {
         const { data } = await supabase
           .from("product_variants")
@@ -153,7 +168,6 @@ export function ReturnSheet({
         }
       }
 
-      // Sync aggregate stock on parent product
       const { data: allV } = await supabase
         .from("product_variants")
         .select("stock")
@@ -186,11 +200,12 @@ export function ReturnSheet({
   }
 
   async function handleConfirm() {
-    if (selectedItems.length === 0) return;
+    if (selectedItems.length === 0 || !refundMethod) return;
     setSaving(true);
     try {
       const supabase = getSupabase();
 
+      // Common: update returned_quantity + restore stock
       for (const item of selectedItems) {
         await supabase
           .from("sale_items")
@@ -206,24 +221,67 @@ export function ReturnSheet({
         );
       }
 
-      // Subtract return amount from customer debt (can go negative)
-      const { data: custData } = await supabase
-        .from("customers")
-        .select("total_debt")
-        .eq("id", customer.id)
-        .single();
-      if (custData) {
-        await supabase
+      if (refundMethod === "cash") {
+        // Group return amounts by sale ID
+        const deductionBySale: Record<string, number> = {};
+        for (const item of selectedItems) {
+          deductionBySale[item.saleId] =
+            (deductionBySale[item.saleId] ?? 0) +
+            item.unitPrice * item.selectedQty;
+        }
+
+        // Fetch current totals and apply deductions
+        const saleIds = Object.keys(deductionBySale);
+        for (const saleId of saleIds) {
+          const { data: saleData } = await supabase
+            .from("sales")
+            .select("total_amount")
+            .eq("id", saleId)
+            .single();
+          if (saleData) {
+            await supabase
+              .from("sales")
+              .update({
+                total_amount: Math.max(
+                  0,
+                  Number(saleData.total_amount) - deductionBySale[saleId]
+                ),
+              })
+              .eq("id", saleId);
+          }
+        }
+
+        toast.success(
+          `İade alındı, ${formatTL(totalReturn)} satıştan düşüldü ✓`
+        );
+      } else {
+        // Credit: reduce customer total_debt
+        const { data: custData } = await supabase
           .from("customers")
-          .update({
-            total_debt: Number(custData.total_debt) - totalReturn,
-          })
-          .eq("id", customer.id);
+          .select("total_debt")
+          .eq("id", customer.id)
+          .single();
+        if (custData) {
+          const newBalance = Number(custData.total_debt) - totalReturn;
+          await supabase
+            .from("customers")
+            .update({ total_debt: newBalance })
+            .eq("id", customer.id);
+
+          if (newBalance < 0) {
+            toast.success(
+              `İade alındı, müşteri ${formatTL(Math.abs(newBalance))} alacaklı ✓`
+            );
+          } else {
+            toast.success(
+              `İade alındı, ${formatTL(totalReturn)} müşteri hesabına eklendi ✓`
+            );
+          }
+        } else {
+          toast.success("İade alındı ✓");
+        }
       }
 
-      toast.success(
-        `İade alındı, ${formatTL(totalReturn)} müşteri hesabına eklendi ✓`
-      );
       onOpenChange(false);
       onCompleted();
     } catch (err) {
@@ -234,6 +292,8 @@ export function ReturnSheet({
       setSaving(false);
     }
   }
+
+  const canConfirm = selectedItems.length > 0 && refundMethod !== null;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -325,6 +385,73 @@ export function ReturnSheet({
                   </div>
                 </div>
               ))}
+
+              {/* Refund method selector */}
+              {selectedItems.length > 0 && (
+                <div className="mt-3 flex flex-col gap-2">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    İade Yöntemi
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setRefundMethod("cash")}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3 transition-colors ${
+                        refundMethod === "cash"
+                          ? "border-blue-400 bg-blue-50"
+                          : "border-input bg-background"
+                      }`}
+                    >
+                      <Banknote
+                        className={`h-6 w-6 ${
+                          refundMethod === "cash"
+                            ? "text-blue-600"
+                            : "text-muted-foreground"
+                        }`}
+                      />
+                      <span
+                        className={`text-xs font-semibold ${
+                          refundMethod === "cash"
+                            ? "text-blue-700"
+                            : "text-foreground"
+                        }`}
+                      >
+                        Parayı İade Et
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Nakit / Kart / Havale
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setRefundMethod("credit")}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl border-2 px-3 py-3 transition-colors ${
+                        refundMethod === "credit"
+                          ? "border-emerald-400 bg-emerald-50"
+                          : "border-input bg-background"
+                      }`}
+                    >
+                      <UserCheck
+                        className={`h-6 w-6 ${
+                          refundMethod === "credit"
+                            ? "text-emerald-600"
+                            : "text-muted-foreground"
+                        }`}
+                      />
+                      <span
+                        className={`text-xs font-semibold ${
+                          refundMethod === "credit"
+                            ? "text-emerald-700"
+                            : "text-foreground"
+                        }`}
+                      >
+                        Hesabına Ekle
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Müşteri alacaklı olur
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -332,14 +459,29 @@ export function ReturnSheet({
         {/* Summary + confirm */}
         {selectedItems.length > 0 && (
           <div className="border-t bg-background px-4 py-3">
-            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-center text-sm text-amber-700">
-              {totalReturnQty} ürün iade ·{" "}
-              <span className="font-semibold">{formatTL(totalReturn)}</span>{" "}
-              müşteri hesabına eklenecek
+            <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2.5 text-center text-sm text-amber-700">
+              <p className="font-semibold">
+                {totalReturnQty} ürün iade · {formatTL(totalReturn)}
+              </p>
+              {refundMethod === "cash" && (
+                <p className="mt-0.5 text-xs">
+                  💵 Tutar satıştan düşülecek
+                </p>
+              )}
+              {refundMethod === "credit" && (
+                <p className="mt-0.5 text-xs">
+                  ✅ Müşteri hesabına eklenecek
+                </p>
+              )}
+              {!refundMethod && (
+                <p className="mt-0.5 text-xs">
+                  İade yöntemi seçin
+                </p>
+              )}
             </div>
             <Button
               onClick={handleConfirm}
-              disabled={saving}
+              disabled={!canConfirm || saving}
               className="h-11 w-full gap-2 font-semibold"
             >
               {saving ? (
@@ -347,7 +489,9 @@ export function ReturnSheet({
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              İadeyi Onayla
+              {!refundMethod
+                ? "İade yöntemi seçin"
+                : "İadeyi Onayla"}
             </Button>
           </div>
         )}
