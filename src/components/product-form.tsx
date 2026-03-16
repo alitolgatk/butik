@@ -409,36 +409,72 @@ export function ProductForm({
       }
 
       if (hasVariants) {
-        const existingIds = allRows.filter((v) => v.id).map((v) => v.id!);
-
         if (isEditing) {
-          if (existingIds.length > 0) {
-            await supabase
-              .from("product_variants")
-              .delete()
-              .eq("product_id", productId!)
-              .not("id", "in", `(${existingIds.join(",")})`);
-          } else {
-            await supabase
-              .from("product_variants")
-              .delete()
-              .eq("product_id", productId!);
-          }
-        }
-
-        const toUpsert = allRows.map((v) => ({
-          ...(v.id ? { id: v.id } : {}),
-          product_id: productId!,
-          size_label: v.size_label,
-          color_label: v.color_label || null,
-          stock: v.stock,
-        }));
-
-        if (toUpsert.length > 0) {
-          const { error: varErr } = await supabase
+          const { data: dbVars } = await supabase
             .from("product_variants")
-            .upsert(toUpsert, { onConflict: "id" });
-          if (varErr) throw varErr;
+            .select("id")
+            .eq("product_id", productId!);
+          const dbIdSet = new Set(
+            (dbVars ?? []).map((v: { id: string }) => v.id)
+          );
+
+          const existingRows = allRows.filter(
+            (v) => v.id && dbIdSet.has(v.id)
+          );
+          const newRows = allRows.filter(
+            (v) => !v.id || !dbIdSet.has(v.id)
+          );
+
+          const formIdSet = new Set(existingRows.map((v) => v.id!));
+          const toDeleteIds = Array.from(dbIdSet).filter(
+            (id) => !formIdSet.has(id)
+          );
+          if (toDeleteIds.length > 0) {
+            await supabase
+              .from("product_variants")
+              .delete()
+              .in("id", toDeleteIds);
+          }
+
+          if (existingRows.length > 0) {
+            const upsertData = existingRows.map((v) => ({
+              id: v.id!,
+              product_id: productId!,
+              size_label: v.size_label,
+              color_label: v.color_label || null,
+              stock: v.stock,
+            }));
+            const { error: uErr } = await supabase
+              .from("product_variants")
+              .upsert(upsertData, { onConflict: "id" });
+            if (uErr) throw uErr;
+          }
+
+          if (newRows.length > 0) {
+            const insertData = newRows.map((v) => ({
+              product_id: productId!,
+              size_label: v.size_label,
+              color_label: v.color_label || null,
+              stock: v.stock,
+            }));
+            const { error: iErr } = await supabase
+              .from("product_variants")
+              .insert(insertData);
+            if (iErr) throw iErr;
+          }
+        } else {
+          if (allRows.length > 0) {
+            const insertData = allRows.map((v) => ({
+              product_id: productId!,
+              size_label: v.size_label,
+              color_label: v.color_label || null,
+              stock: v.stock,
+            }));
+            const { error: iErr } = await supabase
+              .from("product_variants")
+              .insert(insertData);
+            if (iErr) throw iErr;
+          }
         }
       } else {
         if (isEditing) {

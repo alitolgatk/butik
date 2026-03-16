@@ -7,6 +7,7 @@ import {
   Loader2,
   Pencil,
   Phone,
+  RotateCcw,
   Trash2,
   Wallet,
 } from "lucide-react";
@@ -37,6 +38,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { PaymentSheet } from "./payment-sheet";
+import { ReturnSheet } from "./return-sheet";
 import {
   PaymentReceiptSheet,
   type PaymentReceiptData,
@@ -81,11 +83,15 @@ export function CustomerDetail({
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
+  const [editDebt, setEditDebt] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   // Payment sheet
   const [paymentOpen, setPaymentOpen] = useState(false);
+
+  // Return sheet
+  const [returnOpen, setReturnOpen] = useState(false);
 
   // Payment receipt
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -119,6 +125,7 @@ export function CustomerDetail({
       setCustomer(cust);
       setEditName(cust.name);
       setEditPhone(cust.phone ?? "");
+      setEditDebt(String(cust.total_debt));
 
       const entries: TimelineEntry[] = [];
 
@@ -172,6 +179,11 @@ export function CustomerDetail({
     setReceiptOpen(true);
   }
 
+  function handleReturnDone() {
+    fetchData();
+    onUpdated();
+  }
+
   function handleTimelinePaymentTap(entry: TimelineEntry) {
     if (!customer) return;
     setReceiptData({
@@ -200,6 +212,7 @@ export function CustomerDetail({
         .update({
           name: editName.trim(),
           phone: editPhone.trim() || null,
+          total_debt: parseFloat(editDebt) || 0,
         })
         .eq("id", customer.id);
       if (error) throw error;
@@ -217,8 +230,12 @@ export function CustomerDetail({
 
   async function handleDelete() {
     if (!customer) return;
-    if (customer.total_debt > 0) {
-      toast.error("Borcu olan müşteri silinemez");
+    if (customer.total_debt !== 0) {
+      toast.error(
+        customer.total_debt > 0
+          ? "Borcu olan müşteri silinemez"
+          : "Alacağı olan müşteri silinemez"
+      );
       return;
     }
     setDeleting(true);
@@ -239,6 +256,25 @@ export function CustomerDetail({
       setDeleting(false);
     }
   }
+
+  const debtBg =
+    customer && customer.total_debt > 0
+      ? "bg-red-50"
+      : customer && customer.total_debt < 0
+        ? "bg-emerald-50"
+        : "bg-muted";
+  const debtTextSm =
+    customer && customer.total_debt > 0
+      ? "text-red-600"
+      : customer && customer.total_debt < 0
+        ? "text-emerald-600"
+        : "text-muted-foreground";
+  const debtTextLg =
+    customer && customer.total_debt > 0
+      ? "text-red-700"
+      : customer && customer.total_debt < 0
+        ? "text-emerald-700"
+        : "text-foreground";
 
   return (
     <>
@@ -272,45 +308,47 @@ export function CustomerDetail({
 
                   {/* Debt display */}
                   <div
-                    className={`rounded-xl px-4 py-3 text-center ${
-                      customer.total_debt > 0 ? "bg-red-50" : "bg-emerald-50"
-                    }`}
+                    className={`rounded-xl px-4 py-3 text-center ${debtBg}`}
                   >
-                    <p
-                      className={`text-xs ${
-                        customer.total_debt > 0
-                          ? "text-red-600"
-                          : "text-emerald-600"
-                      }`}
-                    >
-                      Güncel Borç
+                    <p className={`text-xs ${debtTextSm}`}>
+                      {customer.total_debt > 0
+                        ? "Borç"
+                        : customer.total_debt < 0
+                          ? "Alacak"
+                          : "Borç yok"}
                     </p>
-                    <p
-                      className={`text-2xl font-bold ${
-                        customer.total_debt > 0
-                          ? "text-red-700"
-                          : "text-emerald-700"
-                      }`}
-                    >
-                      {formatTL(customer.total_debt)}
+                    <p className={`text-2xl font-bold ${debtTextLg}`}>
+                      {customer.total_debt === 0
+                        ? "₺0"
+                        : formatTL(Math.abs(customer.total_debt))}
                     </p>
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex gap-2">
-                    {customer.total_debt > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      {customer.total_debt > 0 && (
+                        <Button
+                          onClick={() => setPaymentOpen(true)}
+                          className="flex-1 gap-2"
+                        >
+                          <Wallet className="h-4 w-4" />
+                          Ödeme Al
+                        </Button>
+                      )}
                       <Button
-                        onClick={() => setPaymentOpen(true)}
+                        variant="outline"
+                        onClick={() => setReturnOpen(true)}
                         className="flex-1 gap-2"
                       >
-                        <Wallet className="h-4 w-4" />
-                        Ödeme Al
+                        <RotateCcw className="h-4 w-4" />
+                        İade Al
                       </Button>
-                    )}
+                    </div>
                     <Button
                       variant="outline"
                       onClick={() => setEditing(true)}
-                      className="flex-1 gap-2"
+                      className="w-full gap-2"
                     >
                       <Pencil className="h-4 w-4" />
                       Düzenle
@@ -339,6 +377,20 @@ export function CustomerDetail({
                       className="mt-1.5"
                     />
                   </div>
+                  <div>
+                    <Label htmlFor="edit-debt">Mevcut Borç (₺)</Label>
+                    <Input
+                      id="edit-debt"
+                      type="number"
+                      step="0.01"
+                      value={editDebt}
+                      onChange={(e) => setEditDebt(e.target.value)}
+                      className="mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Negatif değer = müşteri alacağı
+                    </p>
+                  </div>
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
@@ -347,6 +399,7 @@ export function CustomerDetail({
                         setEditing(false);
                         setEditName(customer.name);
                         setEditPhone(customer.phone ?? "");
+                        setEditDebt(String(customer.total_debt));
                       }}
                     >
                       İptal
@@ -384,8 +437,10 @@ export function CustomerDetail({
                           Müşteriyi silmek istediğinize emin misiniz?
                         </AlertDialogTitle>
                         <AlertDialogDescription>
-                          {customer.total_debt > 0
-                            ? "Borcu olan müşteri silinemez. Önce borcu kapatın."
+                          {customer.total_debt !== 0
+                            ? customer.total_debt > 0
+                              ? "Borcu olan müşteri silinemez. Önce borcu kapatın."
+                              : "Alacağı olan müşteri silinemez."
                             : `"${customer.name}" kalıcı olarak silinecek.`}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
@@ -521,6 +576,16 @@ export function CustomerDetail({
           onOpenChange={setPaymentOpen}
           customer={customer}
           onPaid={handlePaymentDone}
+        />
+      )}
+
+      {/* Return sub-sheet */}
+      {customer && (
+        <ReturnSheet
+          open={returnOpen}
+          onOpenChange={setReturnOpen}
+          customer={customer}
+          onCompleted={handleReturnDone}
         />
       )}
 

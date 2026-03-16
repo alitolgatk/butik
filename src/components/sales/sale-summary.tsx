@@ -233,7 +233,7 @@ export function SaleSummary({
         }
       }
 
-      // 4. If acik_hesap, update customer debt (use final discounted total)
+      // 4. Update customer debt
       if (saleType === "acik_hesap" && customer) {
         const { data: cust } = await supabase
           .from("customers")
@@ -247,6 +247,24 @@ export function SaleSummary({
               total_debt: Number(cust.total_debt) + finalTotal,
             })
             .eq("id", customer.id);
+        }
+      } else if (
+        showOptionalCustomer &&
+        optionalCustomer &&
+        Number(optionalCustomer.total_debt) < 0
+      ) {
+        const { data: cust } = await supabase
+          .from("customers")
+          .select("total_debt")
+          .eq("id", optionalCustomer.id)
+          .single();
+        if (cust) {
+          await supabase
+            .from("customers")
+            .update({
+              total_debt: Math.min(0, Number(cust.total_debt) + finalTotal),
+            })
+            .eq("id", optionalCustomer.id);
         }
       }
 
@@ -451,6 +469,17 @@ export function SaleSummary({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Customer credit info */}
+          {effectiveCustomer && Number(effectiveCustomer.total_debt) < 0 && (
+            <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
+              Bu müşterinin{" "}
+              <span className="font-semibold">
+                {formatTL(Math.abs(effectiveCustomer.total_debt))}
+              </span>{" "}
+              alacağı var — satıştan düşülecek
             </div>
           )}
 

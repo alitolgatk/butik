@@ -681,25 +681,25 @@ function SummaryCard({
   bgClass: string;
 }) {
   return (
-    <Card className="border-0 shadow-sm">
-      <CardContent className="flex items-center gap-4 p-4">
+    <Card className="overflow-hidden border-0 shadow-sm">
+      <CardContent className="flex items-center gap-3 p-3">
         <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bgClass}`}
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${bgClass}`}
         >
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="truncate text-xs text-muted-foreground">{title}</p>
           {loading ? (
-            <div className="mt-1 h-6 w-24 animate-pulse rounded bg-muted" />
+            <div className="mt-1 h-5 w-20 animate-pulse rounded bg-muted" />
           ) : (
-            <div className="flex items-baseline gap-2">
-              <span className="text-xl font-bold tracking-tight">
+            <div className="min-w-0">
+              <p className="truncate text-lg font-bold leading-tight tracking-tight">
                 {primaryValue}
-              </span>
-              <span className="text-sm text-muted-foreground">
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
                 {secondaryValue}
-              </span>
+              </p>
             </div>
           )}
         </div>
