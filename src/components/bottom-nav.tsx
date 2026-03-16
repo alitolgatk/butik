@@ -20,6 +20,7 @@ const sideItems = [
 
 export function BottomNav() {
   const pathname = usePathname();
+  if (pathname === "/giris") return null;
   const isSatisActive = pathname.startsWith("/satis");
 
   return (
