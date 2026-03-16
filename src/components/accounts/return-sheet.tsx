@@ -255,7 +255,32 @@ export function ReturnSheet({
           `İade alındı, ${formatTL(totalReturn)} satıştan düşüldü ✓`
         );
       } else {
-        // Credit: reduce customer total_debt
+        // Credit: reduce customer total_debt AND deduct from sale totals
+        const deductionBySale: Record<string, number> = {};
+        for (const item of selectedItems) {
+          deductionBySale[item.saleId] =
+            (deductionBySale[item.saleId] ?? 0) +
+            item.unitPrice * item.selectedQty;
+        }
+        for (const saleId of Object.keys(deductionBySale)) {
+          const { data: saleData } = await supabase
+            .from("sales")
+            .select("total_amount")
+            .eq("id", saleId)
+            .single();
+          if (saleData) {
+            await supabase
+              .from("sales")
+              .update({
+                total_amount: Math.max(
+                  0,
+                  Number(saleData.total_amount) - deductionBySale[saleId]
+                ),
+              })
+              .eq("id", saleId);
+          }
+        }
+
         const { data: custData } = await supabase
           .from("customers")
           .select("total_debt")
