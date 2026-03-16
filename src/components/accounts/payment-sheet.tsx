@@ -42,7 +42,7 @@ export function PaymentSheet({
   function handleOpen(isOpen: boolean) {
     if (isOpen) {
       setPaymentType("nakit");
-      setAmount("");
+      setAmount(customer.total_debt > 0 ? String(customer.total_debt) : "");
       setNote("");
     }
     onOpenChange(isOpen);

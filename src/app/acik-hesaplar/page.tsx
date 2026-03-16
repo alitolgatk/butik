@@ -27,7 +27,7 @@ export default function AcikHesaplarPage() {
       const { data, error } = await supabase
         .from("customers")
         .select("*")
-        .order("total_debt", { ascending: false });
+        .order("name", { ascending: true });
       if (error) throw error;
       setCustomers((data ?? []) as Customer[]);
     } catch {
