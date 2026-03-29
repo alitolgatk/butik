@@ -70,6 +70,7 @@ interface StatsData {
   saleCount: number;
   breakdown: { type: SaleType; total: number }[];
   debtCollection: number;
+  debtBreakdown: { type: DebtPaymentType; total: number }[];
 }
 
 const BREAKDOWN_COLORS: Partial<Record<SaleType, string>> = {
@@ -77,6 +78,12 @@ const BREAKDOWN_COLORS: Partial<Record<SaleType, string>> = {
   kart: "bg-blue-500",
   havale: "bg-violet-500",
   acik_hesap: "bg-amber-500",
+};
+
+const DEBT_BREAKDOWN_COLORS: Record<string, string> = {
+  nakit: "bg-emerald-500",
+  kart: "bg-blue-500",
+  havale: "bg-violet-500",
 };
 
 // ─── Component ───
@@ -116,6 +123,7 @@ export default function HomePage() {
     saleCount: 0,
     breakdown: [],
     debtCollection: 0,
+    debtBreakdown: [],
   });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -173,7 +181,6 @@ export default function HomePage() {
           totalReceivables,
         });
 
-        // Gather all customer IDs from both sources
         const recentSales = (recentSalesRes.data ?? []) as {
           id: string;
           type: SaleType;
@@ -209,7 +216,6 @@ export default function HomePage() {
           }
         }
 
-        // Build unified feed
         const saleEntries: FeedEntry[] = recentSales.map((r) => ({
           kind: "sale",
           id: r.id,
@@ -279,7 +285,7 @@ export default function HomePage() {
           .gt("total_amount", 0),
         supabase
           .from("debt_payments")
-          .select("amount")
+          .select("amount, payment_type")
           .gte("created_at", statsPeriod.from)
           .lte("created_at", statsPeriod.to),
       ]);
@@ -296,12 +302,18 @@ export default function HomePage() {
         .map(([type, total]) => ({ type: type as SaleType, total: total as number }))
         .sort((a, b) => b.total - a.total);
 
-      const debtCollection = (debtPayResult.data ?? []).reduce(
-        (s, r) => s + Number((r as { amount: number }).amount),
-        0
-      );
+      const debtPayRows = (debtPayResult.data ?? []) as { amount: number; payment_type: string | null }[];
+      const debtCollection = debtPayRows.reduce((s, r) => s + Number(r.amount), 0);
+      const debtTypeMap: Partial<Record<DebtPaymentType, number>> = {};
+      for (const r of debtPayRows) {
+        const pt = (r.payment_type || "nakit") as DebtPaymentType;
+        debtTypeMap[pt] = (debtTypeMap[pt] ?? 0) + Number(r.amount);
+      }
+      const debtBreakdown = Object.entries(debtTypeMap)
+        .map(([type, total]) => ({ type: type as DebtPaymentType, total: total as number }))
+        .sort((a, b) => b.total - a.total);
 
-      setStats({ totalRevenue, saleCount: rows.length, breakdown, debtCollection });
+      setStats({ totalRevenue, saleCount: rows.length, breakdown, debtCollection, debtBreakdown });
     } catch {
       // silent
     } finally {
@@ -381,43 +393,7 @@ export default function HomePage() {
           </Card>
         )}
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 gap-3">
-          <SummaryCard
-            icon={<CreditCard className="h-5 w-5 text-emerald-600" />}
-            title="Bugünkü Satışlar"
-            loading={loading && !error}
-            primaryValue={formatTL(data.todaySalesTotal)}
-            secondaryValue={`${data.todaySalesCount} adet`}
-            bgClass="bg-emerald-50"
-          />
-          <SummaryCard
-            icon={<Wallet className="h-5 w-5 text-red-600" />}
-            title="Toplam Alacak"
-            loading={loading && !error}
-            primaryValue={formatTL(data.totalReceivables)}
-            secondaryValue={`${data.activeDebtCount} müşteri`}
-            bgClass="bg-red-50"
-          />
-          <SummaryCard
-            icon={<BookOpen className="h-5 w-5 text-amber-600" />}
-            title="Açık Hesaplar"
-            loading={loading && !error}
-            primaryValue={`${data.activeDebtCount}`}
-            secondaryValue="müşteri"
-            bgClass="bg-amber-50"
-          />
-          <SummaryCard
-            icon={<PackageCheck className="h-5 w-5 text-violet-600" />}
-            title="Aktif Emanetler"
-            loading={loading && !error}
-            primaryValue={`${data.activeEmanetCount}`}
-            secondaryValue="adet"
-            bgClass="bg-violet-50"
-          />
-        </div>
-
-        {/* ───── İstatistik ───── */}
+        {/* ───── İstatistik (moved to top) ───── */}
         <div>
           <p className="mb-3 text-sm font-semibold">İstatistik</p>
 
@@ -443,7 +419,7 @@ export default function HomePage() {
                 className="flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary transition-colors active:bg-accent"
               >
                 <CalendarDays className="h-3.5 w-3.5" />
-                Aralık
+                Tarih
               </button>
             </div>
           </div>
@@ -468,48 +444,84 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {stats.breakdown.length > 0 && (
+          {(stats.breakdown.length > 0 || stats.debtBreakdown.length > 0) && (
             <Card className="mt-3 border-0 shadow-sm">
               <CardContent className="p-4">
-                <p className="mb-3 text-xs font-semibold text-muted-foreground">
-                  Satış Dağılımı
-                </p>
-                <div className="flex flex-col gap-3">
-                  {stats.breakdown.map((b) => {
-                    const pct =
-                      stats.totalRevenue > 0
-                        ? (b.total / stats.totalRevenue) * 100
-                        : 0;
-                    return (
-                      <div key={b.type}>
-                        <div className="flex items-center justify-between text-sm">
-                          <span>
-                            {SALE_TYPE_LABELS[b.type].emoji}{" "}
-                            {SALE_TYPE_LABELS[b.type].label}
-                          </span>
-                          <span className="font-semibold">
-                            {formatTL(b.total)}
-                          </span>
-                        </div>
-                        <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className={`h-full rounded-full transition-all ${
-                              BREAKDOWN_COLORS[b.type] ?? "bg-gray-400"
-                            }`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                {stats.breakdown.length > 0 && (
+                  <>
+                    <p className="mb-3 text-xs font-semibold text-muted-foreground">
+                      Satış Dağılımı
+                    </p>
+                    <div className="flex flex-col gap-3">
+                      {stats.breakdown.map((b) => {
+                        const pct =
+                          stats.totalRevenue > 0
+                            ? (b.total / stats.totalRevenue) * 100
+                            : 0;
+                        return (
+                          <div key={b.type}>
+                            <div className="flex items-center justify-between text-sm">
+                              <span>
+                                {SALE_TYPE_LABELS[b.type].emoji}{" "}
+                                {SALE_TYPE_LABELS[b.type].label}
+                              </span>
+                              <span className="font-semibold">
+                                {formatTL(b.total)}
+                              </span>
+                            </div>
+                            <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  BREAKDOWN_COLORS[b.type] ?? "bg-gray-400"
+                                }`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
 
-                {stats.debtCollection > 0 && (
+                {stats.debtBreakdown.length > 0 && (
                   <>
                     <div className="my-3 border-t border-dashed" />
-                    <div className="flex items-center justify-between text-sm">
+                    <p className="mb-3 text-xs font-semibold text-muted-foreground">
+                      Tahsilat Dağılımı
+                    </p>
+                    <div className="flex flex-col gap-3">
+                      {stats.debtBreakdown.map((b) => {
+                        const pct =
+                          stats.debtCollection > 0
+                            ? (b.total / stats.debtCollection) * 100
+                            : 0;
+                        return (
+                          <div key={b.type}>
+                            <div className="flex items-center justify-between text-sm">
+                              <span>
+                                {DEBT_PAYMENT_TYPE_LABELS[b.type].emoji}{" "}
+                                {DEBT_PAYMENT_TYPE_LABELS[b.type].label}
+                              </span>
+                              <span className="font-semibold">
+                                {formatTL(b.total)}
+                              </span>
+                            </div>
+                            <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  DEBT_BREAKDOWN_COLORS[b.type] ?? "bg-gray-400"
+                                }`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
-                        ✅ Cari Tahsilat
+                        ✅ Toplam Tahsilat
                       </span>
                       <span className="font-semibold text-emerald-600">
                         {formatTL(stats.debtCollection)}
@@ -520,6 +532,61 @@ export default function HomePage() {
               </CardContent>
             </Card>
           )}
+        </div>
+
+        {/* ───── Summary Cards ───── */}
+        <div>
+          {/* Bugünkü Satışlar — prominent full-width */}
+          <Card className="overflow-hidden border-0 bg-emerald-50/80 shadow-sm">
+            <CardContent className="flex items-center gap-4 p-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-100">
+                <CreditCard className="h-6 w-6 text-emerald-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-emerald-700/70">Bugünkü Satışlar</p>
+                {loading && !error ? (
+                  <div className="mt-1 h-7 w-32 animate-pulse rounded bg-emerald-200/50" />
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold tracking-tight text-emerald-800">
+                      {formatTL(data.todaySalesTotal)}
+                    </p>
+                    <p className="text-xs text-emerald-600/70">
+                      {data.todaySalesCount} adet
+                    </p>
+                  </>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Other 3 cards in 2-col grid */}
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <SummaryCard
+              icon={<Wallet className="h-5 w-5 text-red-600" />}
+              title="Toplam Alacak"
+              loading={loading && !error}
+              primaryValue={formatTL(data.totalReceivables)}
+              secondaryValue={`${data.activeDebtCount} müşteri`}
+              bgClass="bg-red-50"
+            />
+            <SummaryCard
+              icon={<BookOpen className="h-5 w-5 text-amber-600" />}
+              title="Açık Hesaplar"
+              loading={loading && !error}
+              primaryValue={`${data.activeDebtCount}`}
+              secondaryValue="müşteri"
+              bgClass="bg-amber-50"
+            />
+            <SummaryCard
+              icon={<PackageCheck className="h-5 w-5 text-violet-600" />}
+              title="Aktif Emanetler"
+              loading={loading && !error}
+              primaryValue={`${data.activeEmanetCount}`}
+              secondaryValue="adet"
+              bgClass="bg-violet-50"
+            />
+          </div>
         </div>
 
         {/* ───── Son İşlemler ───── */}

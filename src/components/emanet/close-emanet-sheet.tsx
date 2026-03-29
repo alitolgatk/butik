@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Loader2, RotateCcw, ShoppingBag } from "lucide-react";
+import { CheckCircle2, Loader2, RotateCcw, ShoppingBag, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
 import { formatTL, SALE_TYPE_LABELS } from "@/lib/cart";
 import type { Customer, Sale, SaleItem, SaleType } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -52,10 +53,17 @@ export function CloseEmanetSheet({
   const [paymentType, setPaymentType] = useState<ClosePaymentType | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Initialize rows whenever the sheet opens or items change
+  // Discount state
+  const [showDiscount, setShowDiscount] = useState(false);
+  const [discountMode, setDiscountMode] = useState<"percent" | "tl">("tl");
+  const [discountInput, setDiscountInput] = useState("");
+
   useEffect(() => {
     if (open) {
       setPaymentType(null);
+      setShowDiscount(false);
+      setDiscountMode("tl");
+      setDiscountInput("");
       setRows(
         items.map((si) => ({
           saleItemId: si.id,
@@ -74,10 +82,13 @@ export function CloseEmanetSheet({
     setRows((prev) =>
       prev.map((r, i) => (i === idx ? { ...r, action } : r))
     );
-    // Clear payment type if no "sat" items remain after this change
     const updatedRows = rows.map((r, i) => (i === idx ? { ...r, action } : r));
     const hasSat = updatedRows.some((r) => r.action === "sat");
-    if (!hasSat) setPaymentType(null);
+    if (!hasSat) {
+      setPaymentType(null);
+      setShowDiscount(false);
+      setDiscountInput("");
+    }
   }
 
   const iadeRows = rows.filter((r) => r.action === "iade");
@@ -86,14 +97,29 @@ export function CloseEmanetSheet({
   const satTotal = satRows.reduce((s, r) => s + r.unitPrice * r.quantity, 0);
   const hasSat = satRows.length > 0;
   const allDecided = undecidedRows.length === 0 && rows.length > 0;
+
+  const discountTL = (() => {
+    const val = parseFloat(discountInput) || 0;
+    if (val <= 0 || !hasSat) return 0;
+    if (discountMode === "percent") {
+      return Math.min(satTotal, (satTotal * Math.min(val, 100)) / 100);
+    }
+    return Math.min(satTotal, val);
+  })();
+
+  const discountedTotal = Math.max(0, satTotal - discountTL);
   const canConfirm = allDecided && (!hasSat || paymentType !== null);
+
+  function clearDiscount() {
+    setShowDiscount(false);
+    setDiscountInput("");
+  }
 
   async function handleConfirm() {
     setSaving(true);
     try {
       const supabase = getSupabase();
 
-      // 1. Restore stock for "iade" items
       for (const row of iadeRows) {
         if (row.variantLabel) {
           const { data: variants } = await supabase
@@ -111,7 +137,6 @@ export function CloseEmanetSheet({
               .eq("id", v.id);
           }
 
-          // Sync aggregate stock on parent product
           const { data: allV } = await supabase
             .from("product_variants")
             .select("stock")
@@ -137,17 +162,15 @@ export function CloseEmanetSheet({
           }
         }
 
-        // Mark returned_quantity on the sale_item
         await supabase
           .from("sale_items")
           .update({ returned_quantity: row.quantity })
           .eq("id", row.saleItemId);
       }
 
-      // 2. Update the sale record
       const allReturned = satRows.length === 0;
       const finalType: SaleType = allReturned ? "nakit" : (paymentType as SaleType);
-      const finalAmount = allReturned ? 0 : satTotal;
+      const finalAmount = allReturned ? 0 : discountedTotal;
 
       const { error: saleErr } = await supabase
         .from("sales")
@@ -155,12 +178,12 @@ export function CloseEmanetSheet({
           status: "completed",
           type: finalType,
           total_amount: finalAmount,
+          discount_amount: discountTL,
         })
         .eq("id", sale.id);
       if (saleErr) throw saleErr;
 
-      // 3. If acik_hesap and there are sold items, add to customer debt
-      if (paymentType === "acik_hesap" && satTotal > 0 && customer) {
+      if (paymentType === "acik_hesap" && discountedTotal > 0 && customer) {
         const { data: cust } = await supabase
           .from("customers")
           .select("total_debt")
@@ -169,7 +192,7 @@ export function CloseEmanetSheet({
         if (cust) {
           await supabase
             .from("customers")
-            .update({ total_debt: Number(cust.total_debt) + satTotal })
+            .update({ total_debt: Number(cust.total_debt) + discountedTotal })
             .eq("id", customer.id);
         }
       }
@@ -200,7 +223,6 @@ export function CloseEmanetSheet({
         <div className="flex-1 overflow-y-auto px-4 pb-4">
           <div className="flex flex-col gap-3 pt-2">
 
-            {/* Per-item decision */}
             {rows.map((row, idx) => (
               <div
                 key={row.saleItemId}
@@ -265,9 +287,40 @@ export function CloseEmanetSheet({
                 <div className="mt-1 flex justify-between">
                   <span className="text-muted-foreground">Satılacak</span>
                   <span className="font-semibold text-emerald-700">
-                    {hasSat ? `${satRows.length} ürün — ${formatTL(satTotal)}` : "0 ürün"}
+                    {hasSat ? `${satRows.length} ürün` : "0 ürün"}
                   </span>
                 </div>
+                {hasSat && (
+                  <>
+                    {discountTL > 0 ? (
+                      <>
+                        <div className="my-2 border-t border-dashed" />
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Ara Toplam</span>
+                          <span>{formatTL(satTotal)}</span>
+                        </div>
+                        <div className="mt-1 flex justify-between text-red-600">
+                          <span>İndirim</span>
+                          <span>-{formatTL(discountTL)}</span>
+                        </div>
+                        <div className="my-2 border-t border-dashed" />
+                        <div className="flex justify-between font-semibold">
+                          <span>Toplam</span>
+                          <span className="text-emerald-700">
+                            {formatTL(discountedTotal)}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-1 flex justify-between">
+                        <span className="text-muted-foreground">Toplam</span>
+                        <span className="font-semibold text-emerald-700">
+                          {formatTL(satTotal)}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
                 {undecidedRows.length > 0 && (
                   <div className="mt-1 flex justify-between">
                     <span className="text-muted-foreground">Karar verilmedi</span>
@@ -279,7 +332,7 @@ export function CloseEmanetSheet({
               </div>
             )}
 
-            {/* Payment type selector — only when there are "sat" items */}
+            {/* Payment type selector */}
             {hasSat && (
               <div className="flex flex-col gap-2">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -307,6 +360,73 @@ export function CloseEmanetSheet({
                 {paymentType === "acik_hesap" && customer && (
                   <div className="rounded-lg bg-amber-50 px-3 py-2 text-center text-sm text-amber-700">
                     Müşteri: <span className="font-semibold">{customer.name}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Discount section */}
+            {hasSat && (
+              <div>
+                {!showDiscount ? (
+                  <button
+                    onClick={() => setShowDiscount(true)}
+                    className="w-full rounded-lg border-2 border-dashed border-input px-3 py-2.5 text-center text-sm font-medium text-muted-foreground transition-colors active:border-primary active:text-primary"
+                  >
+                    + İndirim Ekle
+                  </button>
+                ) : (
+                  <div className="rounded-lg border bg-card p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">İndirim</span>
+                      <button
+                        onClick={clearDiscount}
+                        className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-destructive"
+                      >
+                        <X className="h-3 w-3" />
+                        Kaldır
+                      </button>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex shrink-0 overflow-hidden rounded-md border">
+                        <button
+                          onClick={() => setDiscountMode("percent")}
+                          className={`flex h-9 w-10 items-center justify-center text-xs font-semibold transition-colors ${
+                            discountMode === "percent"
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-background text-muted-foreground"
+                          }`}
+                        >
+                          %
+                        </button>
+                        <button
+                          onClick={() => setDiscountMode("tl")}
+                          className={`flex h-9 w-10 items-center justify-center text-xs font-semibold transition-colors ${
+                            discountMode === "tl"
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-background text-muted-foreground"
+                          }`}
+                        >
+                          ₺
+                        </button>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        step={discountMode === "percent" ? "1" : "0.01"}
+                        max={discountMode === "percent" ? "100" : satTotal}
+                        placeholder="0"
+                        value={discountInput}
+                        onChange={(e) => setDiscountInput(e.target.value)}
+                        className="flex-1"
+                        autoFocus
+                      />
+                    </div>
+                    {discountTL > 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        İndirim tutarı: -{formatTL(discountTL)}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

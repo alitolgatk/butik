@@ -473,6 +473,7 @@ export default function SatisPage() {
       {/* Variant picker */}
       {variantPickerProduct && (
         <VariantPicker
+          key={variantPickerProduct.id}
           open={variantPickerOpen}
           onOpenChange={setVariantPickerOpen}
           productName={variantPickerProduct.name}

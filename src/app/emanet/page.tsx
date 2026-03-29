@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, PackageCheck, PackageOpen } from "lucide-react";
 
 import { getSupabase } from "@/lib/supabase";
@@ -8,9 +8,17 @@ import { formatTL } from "@/lib/cart";
 import type { Sale, Customer } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { EmanetDetail } from "@/components/emanet/emanet-detail";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 
 interface EmanetRow {
   id: string;
+  customerId: string;
   customerName: string;
   date: Date;
   itemCount: number;
@@ -20,11 +28,27 @@ interface EmanetRow {
   soldCount?: number;
 }
 
+interface EmanetGroup {
+  customerId: string;
+  customerName: string;
+  emanets: EmanetRow[];
+  totalItems: number;
+  totalAmount: number;
+  latestDate: Date;
+}
+
 function formatDateTR(date: Date): string {
   return date.toLocaleDateString("tr-TR", {
     day: "numeric",
     month: "short",
     year: "numeric",
+  });
+}
+
+function formatDateShort(date: Date): string {
+  return date.toLocaleDateString("tr-TR", {
+    day: "numeric",
+    month: "short",
   });
 }
 
@@ -37,6 +61,10 @@ export default function EmanetPage() {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+
+  // Picker sheet for multi-emanet groups
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerGroup, setPickerGroup] = useState<EmanetGroup | null>(null);
 
   const fetchEmanets = useCallback(async () => {
     setLoading(true);
@@ -71,7 +99,6 @@ export default function EmanetPage() {
       const allSaleIds = allSales.map((s) => s.id);
       const completedIds = completedSales.map((s) => s.id);
 
-      // Customer names
       const customerIds = Array.from(
         new Set(
           allSales
@@ -90,7 +117,6 @@ export default function EmanetPage() {
         }
       }
 
-      // Fetch sale_items for all emanets
       const { data: allItems } = await supabase
         .from("sale_items")
         .select("sale_id, quantity, returned_quantity")
@@ -112,12 +138,12 @@ export default function EmanetPage() {
         }
       }
 
-      // Build rows
       const result: EmanetRow[] = [];
 
       for (const s of activeSales) {
         result.push({
           id: s.id,
+          customerId: s.customer_id ?? "",
           customerName: s.customer_id
             ? (customerMap[s.customer_id] ?? "Bilinmeyen")
             : "Müşteri yok",
@@ -131,6 +157,7 @@ export default function EmanetPage() {
       for (const s of completedSales) {
         result.push({
           id: s.id,
+          customerId: s.customer_id ?? "",
           customerName: s.customer_id
             ? (customerMap[s.customer_id] ?? "Bilinmeyen")
             : "Müşteri yok",
@@ -158,11 +185,53 @@ export default function EmanetPage() {
 
   const activeRows = rows.filter((r) => r.status === "open");
   const historyRows = rows.filter((r) => r.status === "completed");
-  const displayRows = tab === "active" ? activeRows : historyRows;
+
+  const activeGroups = useMemo(() => {
+    const map: Record<string, EmanetGroup> = {};
+    for (const row of activeRows) {
+      const key = row.customerId || row.id;
+      if (!map[key]) {
+        map[key] = {
+          customerId: key,
+          customerName: row.customerName,
+          emanets: [],
+          totalItems: 0,
+          totalAmount: 0,
+          latestDate: row.date,
+        };
+      }
+      map[key].emanets.push(row);
+      map[key].totalItems += row.itemCount;
+      map[key].totalAmount += row.totalAmount;
+      if (row.date > map[key].latestDate) {
+        map[key].latestDate = row.date;
+      }
+    }
+    for (const g of Object.values(map)) {
+      g.emanets.sort((a, b) => b.date.getTime() - a.date.getTime());
+    }
+    return Object.values(map).sort(
+      (a, b) => b.latestDate.getTime() - a.latestDate.getTime()
+    );
+  }, [activeRows]);
 
   function openDetail(saleId: string) {
     setSelectedSaleId(saleId);
     setDetailOpen(true);
+  }
+
+  function handleGroupTap(group: EmanetGroup) {
+    if (group.emanets.length === 1) {
+      openDetail(group.emanets[0].id);
+    } else {
+      setPickerGroup(group);
+      setPickerOpen(true);
+    }
+  }
+
+  function pickEmanet(saleId: string) {
+    setPickerOpen(false);
+    openDetail(saleId);
   }
 
   return (
@@ -212,29 +281,64 @@ export default function EmanetPage() {
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="mt-2 text-sm text-muted-foreground">Yükleniyor...</p>
           </div>
-        ) : displayRows.length === 0 ? (
+        ) : tab === "active" ? (
+          activeGroups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="mb-4 rounded-full bg-muted p-5">
+                <PackageCheck className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <p className="font-medium">Aktif emanet yok</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Satış ekranından emanet oluşturabilirsiniz
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5 pb-4">
+              {activeGroups.map((group) => (
+                <button
+                  key={group.customerId}
+                  onClick={() => handleGroupTap(group)}
+                  className="flex items-center justify-between rounded-xl border bg-card px-4 py-3 text-left transition-colors active:bg-accent"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">{group.customerName}</p>
+                    {group.emanets.length === 1 ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {formatDateShort(group.emanets[0].date)} · {group.totalItems} ürün
+                      </p>
+                    ) : (
+                      <div className="mt-0.5">
+                        {group.emanets.map((e) => (
+                          <p key={e.id} className="text-xs text-muted-foreground">
+                            • {formatDateShort(e.date)} · {e.itemCount} ürün
+                          </p>
+                        ))}
+                        <p className="mt-0.5 text-xs font-medium text-muted-foreground">
+                          Toplam {group.totalItems} ürün
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-sm font-bold text-violet-600">
+                    {formatTL(group.totalAmount)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )
+        ) : historyRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="mb-4 rounded-full bg-muted p-5">
-              {tab === "active" ? (
-                <PackageCheck className="h-10 w-10 text-muted-foreground" />
-              ) : (
-                <PackageOpen className="h-10 w-10 text-muted-foreground" />
-              )}
+              <PackageOpen className="h-10 w-10 text-muted-foreground" />
             </div>
-            <p className="font-medium">
-              {tab === "active"
-                ? "Aktif emanet yok"
-                : "Tamamlanmış emanet yok"}
-            </p>
+            <p className="font-medium">Tamamlanmış emanet yok</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {tab === "active"
-                ? "Satış ekranından emanet oluşturabilirsiniz"
-                : "Kapatılan emanetler burada görünecek"}
+              Kapatılan emanetler burada görünecek
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 pb-4">
-            {displayRows.map((row) => (
+            {historyRows.map((row) => (
               <button
                 key={row.id}
                 onClick={() => openDetail(row.id)}
@@ -245,37 +349,29 @@ export default function EmanetPage() {
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {formatDateTR(row.date)} · {row.itemCount} ürün
                   </p>
-                  {row.status === "completed" && (
-                    <p className="mt-0.5 text-xs">
-                      {row.soldCount === 0 ? (
+                  <p className="mt-0.5 text-xs">
+                    {row.soldCount === 0 ? (
+                      <span className="text-amber-600">
+                        ↩ Tamamı iade edildi
+                      </span>
+                    ) : row.returnedCount === 0 ? (
+                      <span className="text-emerald-600">
+                        ✓ Tamamı satıldı
+                      </span>
+                    ) : (
+                      <>
                         <span className="text-amber-600">
-                          ↩ Tamamı iade edildi
+                          ↩ {row.returnedCount} iade
                         </span>
-                      ) : row.returnedCount === 0 ? (
+                        <span className="mx-1 text-muted-foreground">·</span>
                         <span className="text-emerald-600">
-                          ✓ Tamamı satıldı
+                          ✓ {row.soldCount} satıldı
                         </span>
-                      ) : (
-                        <>
-                          <span className="text-amber-600">
-                            ↩ {row.returnedCount} iade
-                          </span>
-                          <span className="mx-1 text-muted-foreground">·</span>
-                          <span className="text-emerald-600">
-                            ✓ {row.soldCount} satıldı
-                          </span>
-                        </>
-                      )}
-                    </p>
-                  )}
+                      </>
+                    )}
+                  </p>
                 </div>
-                <span
-                  className={`shrink-0 text-sm font-bold ${
-                    row.status === "open"
-                      ? "text-violet-600"
-                      : "text-emerald-600"
-                  }`}
-                >
+                <span className="shrink-0 text-sm font-bold text-emerald-600">
                   {formatTL(row.totalAmount)}
                 </span>
               </button>
@@ -291,6 +387,39 @@ export default function EmanetPage() {
         saleId={selectedSaleId}
         onUpdated={fetchEmanets}
       />
+
+      {/* Picker sheet for multi-emanet groups */}
+      <Sheet open={pickerOpen} onOpenChange={setPickerOpen}>
+        <SheetContent side="bottom" className="rounded-t-2xl pb-8">
+          <SheetHeader className="px-4 pt-4">
+            <SheetTitle>{pickerGroup?.customerName ?? "Emanetler"}</SheetTitle>
+            <SheetDescription>
+              Açmak istediğiniz emaneti seçin
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-col gap-1.5 px-4 pt-3">
+            {pickerGroup?.emanets.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => pickEmanet(e.id)}
+                className="flex items-center justify-between rounded-xl border bg-card px-4 py-3 text-left transition-colors active:bg-accent"
+              >
+                <div>
+                  <p className="text-sm font-medium">
+                    {formatDateTR(e.date)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {e.itemCount} ürün
+                  </p>
+                </div>
+                <span className="text-sm font-bold text-violet-600">
+                  {formatTL(e.totalAmount)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

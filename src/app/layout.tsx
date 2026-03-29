@@ -10,6 +10,16 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 export const metadata: Metadata = {
   title: "Başak Butik",
   description: "Kadın giyim butik satış yönetim sistemi",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Başak Butik",
+  },
+  icons: {
+    icon: "/icon-512.png",
+    apple: "/icon-192.png",
+  },
 };
 
 export const viewport: Viewport = {
