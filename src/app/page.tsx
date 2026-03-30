@@ -114,6 +114,7 @@ export default function HomePage() {
     const timer = setInterval(() => setClock(new Date()), 30000);
     return () => clearInterval(timer);
   }, []);
+  const [todayMode, setTodayMode] = useState(true);
   const [customRange, setCustomRange] = useState(false);
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
@@ -262,6 +263,17 @@ export default function HomePage() {
         label: "Seçili Dönem",
       };
     }
+    if (todayMode) {
+      const from = new Date();
+      from.setHours(0, 0, 0, 0);
+      const to = new Date();
+      to.setHours(23, 59, 59, 999);
+      return {
+        from: from.toISOString(),
+        to: to.toISOString(),
+        label: "Bugün",
+      };
+    }
     const from = new Date(statsYear, statsMonth, 1);
     const to = new Date(statsYear, statsMonth + 1, 0, 23, 59, 59);
     return {
@@ -269,7 +281,7 @@ export default function HomePage() {
       to: to.toISOString(),
       label: `${MONTH_NAMES[statsMonth]} ${statsYear}`,
     };
-  }, [customRange, rangeFrom, rangeTo, statsMonth, statsYear]);
+  }, [customRange, rangeFrom, rangeTo, todayMode, statsMonth, statsYear]);
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
@@ -327,6 +339,7 @@ export default function HomePage() {
 
   function prevMonth() {
     setCustomRange(false);
+    setTodayMode(false);
     if (statsMonth === 0) {
       setStatsMonth(11);
       setStatsYear((y) => y - 1);
@@ -337,6 +350,7 @@ export default function HomePage() {
 
   function nextMonth() {
     setCustomRange(false);
+    setTodayMode(false);
     if (statsMonth === 11) {
       setStatsMonth(0);
       setStatsYear((y) => y + 1);
@@ -348,6 +362,7 @@ export default function HomePage() {
   function applyCustomRange() {
     if (rangeFrom && rangeTo) {
       setCustomRange(true);
+      setTodayMode(false);
       setRangePickerOpen(false);
     }
   }
