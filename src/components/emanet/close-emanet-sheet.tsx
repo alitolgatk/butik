@@ -122,19 +122,40 @@ export function CloseEmanetSheet({
 
       for (const row of iadeRows) {
         if (row.variantLabel) {
-          const { data: variants } = await supabase
-            .from("product_variants")
-            .select("id, stock")
-            .eq("product_id", row.productId)
-            .eq("size_label", row.variantLabel)
-            .limit(1);
+          let matched = false;
 
-          if (variants && variants.length > 0) {
-            const v = variants[0];
-            await supabase
+          if (row.variantLabel.includes(" / ")) {
+            const [colorPart, ...sizeParts] = row.variantLabel.split(" / ");
+            const sizePart = sizeParts.join(" / ");
+            const { data } = await supabase
               .from("product_variants")
-              .update({ stock: v.stock + row.quantity })
-              .eq("id", v.id);
+              .select("id, stock")
+              .eq("product_id", row.productId)
+              .eq("color_label", colorPart)
+              .eq("size_label", sizePart)
+              .limit(1);
+            if (data && data.length > 0) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: data[0].stock + row.quantity })
+                .eq("id", data[0].id);
+              matched = true;
+            }
+          }
+
+          if (!matched) {
+            const { data } = await supabase
+              .from("product_variants")
+              .select("id, stock")
+              .eq("product_id", row.productId)
+              .eq("size_label", row.variantLabel)
+              .limit(1);
+            if (data && data.length > 0) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: data[0].stock + row.quantity })
+                .eq("id", data[0].id);
+            }
           }
 
           const { data: allV } = await supabase
