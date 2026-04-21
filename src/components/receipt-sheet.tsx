@@ -82,6 +82,11 @@ export function ReceiptSheet({ open, onOpenChange, saleId }: ReceiptSheetProps) 
     (s, i) => s + i.unit_price * i.quantity,
     0
   );
+  const totalReturned = items.reduce(
+    (s, i) => s + i.unit_price * (i.returned_quantity ?? 0),
+    0
+  );
+  const hasReturns = totalReturned > 0;
   const discount = sale?.discount_amount ?? 0;
   const hasDiscount = discount > 0;
 
@@ -100,17 +105,30 @@ export function ReceiptSheet({ open, onOpenChange, saleId }: ReceiptSheetProps) 
     lines.push(`Tarih: ${formatDateTR(new Date(sale.created_at))}`);
     lines.push("─────────────────────────────");
     for (const item of items) {
+      const returned = item.returned_quantity ?? 0;
+      const active = item.quantity - returned;
+      const fullyReturned = active <= 0;
       const label =
         item.product_name +
         (item.variant_label ? ` (${item.variant_label})` : "");
+      const suffix = fullyReturned
+        ? " [İade Edildi]"
+        : returned > 0
+          ? ` (${returned} adet iade)`
+          : "";
       lines.push(
-        `${label}  ${item.quantity}  ${formatTL(item.unit_price * item.quantity)}`
+        `${label}${suffix}  ${fullyReturned ? item.quantity : active}  ${formatTL(item.unit_price * (active > 0 ? active : item.quantity))}`
       );
     }
     lines.push("─────────────────────────────");
-    if (hasDiscount) {
+    if (hasDiscount || hasReturns) {
       lines.push(`Ara Toplam: ${formatTL(subtotal)}`);
+    }
+    if (hasDiscount) {
       lines.push(`İndirim: -${formatTL(discount)}`);
+    }
+    if (hasReturns) {
+      lines.push(`İade: -${formatTL(totalReturned)}`);
     }
     lines.push(`TOPLAM: ${formatTL(sale.total_amount)}`);
     lines.push("─────────────────────────────");
@@ -213,34 +231,57 @@ export function ReceiptSheet({ open, onOpenChange, saleId }: ReceiptSheetProps) 
 
                 {/* Items */}
                 <div className="flex flex-col gap-1.5">
-                  {items.map((item) => (
-                    <div key={item.id} className="flex justify-between gap-2">
-                      <span className="min-w-0 flex-1">
-                        {item.product_name}
-                        {item.variant_label && ` (${item.variant_label})`}
-                        {item.quantity > 1 && ` ×${item.quantity}`}
-                      </span>
-                      <span className="shrink-0 font-medium">
-                        {formatTL(item.unit_price * item.quantity)}
-                      </span>
-                    </div>
-                  ))}
+                  {items.map((item) => {
+                    const returned = item.returned_quantity ?? 0;
+                    const active = item.quantity - returned;
+                    const fullyReturned = active <= 0;
+                    return (
+                      <div key={item.id} className="flex justify-between gap-2">
+                        <span
+                          className={`min-w-0 flex-1 ${fullyReturned ? "text-muted-foreground line-through" : ""}`}
+                        >
+                          {item.product_name}
+                          {item.variant_label && ` (${item.variant_label})`}
+                          {item.quantity > 1 && ` ×${active > 0 ? active : item.quantity}`}
+                          {returned > 0 && !fullyReturned && (
+                            <span className="ml-1 text-[10px] text-amber-600">
+                              ({returned} iade)
+                            </span>
+                          )}
+                          {fullyReturned && (
+                            <span className="ml-1 text-[10px]"> [İade]</span>
+                          )}
+                        </span>
+                        <span
+                          className={`shrink-0 font-medium ${fullyReturned ? "text-muted-foreground line-through" : ""}`}
+                        >
+                          {formatTL(item.unit_price * (active > 0 ? active : item.quantity))}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="my-3 border-b border-dashed" />
 
                 {/* Totals */}
+                {(hasDiscount || hasReturns) && (
+                  <div className="flex justify-between">
+                    <span>Ara Toplam:</span>
+                    <span>{formatTL(subtotal)}</span>
+                  </div>
+                )}
                 {hasDiscount && (
-                  <>
-                    <div className="flex justify-between">
-                      <span>Ara Toplam:</span>
-                      <span>{formatTL(subtotal)}</span>
-                    </div>
-                    <div className="flex justify-between text-red-600">
-                      <span>İndirim:</span>
-                      <span>-{formatTL(discount)}</span>
-                    </div>
-                  </>
+                  <div className="flex justify-between text-red-600">
+                    <span>İndirim:</span>
+                    <span>-{formatTL(discount)}</span>
+                  </div>
+                )}
+                {hasReturns && (
+                  <div className="flex justify-between text-amber-700">
+                    <span>İade:</span>
+                    <span>-{formatTL(totalReturned)}</span>
+                  </div>
                 )}
                 <div className="flex justify-between text-sm font-bold">
                   <span>TOPLAM:</span>
