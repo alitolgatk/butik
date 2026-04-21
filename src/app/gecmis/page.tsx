@@ -62,13 +62,15 @@ export default function GecmisPage() {
       const [salesRes, paymentsRes] = await Promise.all([
         supabase
           .from("sales")
-          .select("id, type, total_amount, created_at, customer_id")
+          .select(
+            "id, type, total_amount, created_at, customers(name), sale_items(product_name)"
+          )
           .eq("status", "completed")
           .order("created_at", { ascending: false })
           .limit(200),
         supabase
           .from("debt_payments")
-          .select("id, amount, created_at, customer_id, note, payment_type")
+          .select("id, amount, created_at, note, payment_type, customers(name)")
           .order("created_at", { ascending: false })
           .limit(200),
       ]);
@@ -80,54 +82,17 @@ export default function GecmisPage() {
         type: SaleType;
         total_amount: number;
         created_at: string;
-        customer_id: string | null;
+        customers: { name: string }[] | null;
+        sale_items: { product_name: string }[];
       }[];
       const allPayments = (paymentsRes.data ?? []) as {
         id: string;
         amount: number;
         created_at: string;
-        customer_id: string;
         note: string | null;
         payment_type: DebtPaymentType | null;
+        customers: { name: string }[] | null;
       }[];
-
-      // Resolve customer names
-      const custIds = Array.from(
-        new Set([
-          ...allSales.map((s) => s.customer_id).filter(Boolean),
-          ...allPayments.map((p) => p.customer_id).filter(Boolean),
-        ] as string[])
-      );
-      const nameMap: Record<string, string> = {};
-      if (custIds.length > 0) {
-        const { data: custs } = await supabase
-          .from("customers")
-          .select("id, name")
-          .in("id", custIds);
-        for (const c of custs ?? []) {
-          const cust = c as { id: string; name: string };
-          nameMap[cust.id] = cust.name;
-        }
-      }
-
-      // Resolve item names for sales search
-      const saleIds = allSales.map((s) => s.id);
-      const itemNameMap: Record<string, string> = {};
-      if (saleIds.length > 0) {
-        const { data: items } = await supabase
-          .from("sale_items")
-          .select("sale_id, product_name")
-          .in("sale_id", saleIds);
-        const grouped: Record<string, string[]> = {};
-        for (const item of items ?? []) {
-          const i = item as { sale_id: string; product_name: string };
-          if (!grouped[i.sale_id]) grouped[i.sale_id] = [];
-          grouped[i.sale_id].push(i.product_name);
-        }
-        for (const [sid, names] of Object.entries(grouped)) {
-          itemNameMap[sid] = names.join(" ");
-        }
-      }
 
       const saleEntries: HistoryEntry[] = allSales.map((s) => ({
         kind: "sale",
@@ -135,8 +100,8 @@ export default function GecmisPage() {
         type: s.type,
         total_amount: s.total_amount,
         created_at: s.created_at,
-        customer_name: s.customer_id ? nameMap[s.customer_id] ?? null : null,
-        item_names: itemNameMap[s.id] ?? "",
+        customer_name: s.customers?.[0]?.name ?? null,
+        item_names: (s.sale_items ?? []).map((i) => i.product_name).join(" "),
       }));
 
       const paymentEntries: HistoryEntry[] = allPayments.map((p) => ({
@@ -144,7 +109,7 @@ export default function GecmisPage() {
         id: p.id,
         amount: Number(p.amount),
         created_at: p.created_at,
-        customer_name: p.customer_id ? nameMap[p.customer_id] ?? null : null,
+        customer_name: p.customers?.[0]?.name ?? null,
         note: p.note,
         payment_type: p.payment_type,
       }));

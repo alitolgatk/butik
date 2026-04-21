@@ -57,27 +57,17 @@ export default function SatisPage() {
       const supabase = getSupabase();
       const { data, error } = await supabase
         .from("products")
-        .select("*")
+        .select("*, product_variants(*)")
         .order("name");
       if (error) throw error;
 
-      const all = (data ?? []) as Product[];
-      const variantIds = all.filter((p) => p.has_variants).map((p) => p.id);
-
-      let variants: ProductVariant[] = [];
-      if (variantIds.length > 0) {
-        const { data: vData } = await supabase
-          .from("product_variants")
-          .select("*")
-          .in("product_id", variantIds);
-        variants = (vData ?? []) as ProductVariant[];
-      }
-
       setProducts(
-        all.map((p) => ({
-          ...p,
-          variants: variants.filter((v) => v.product_id === p.id),
-        }))
+        ((data ?? []) as (Product & { product_variants: ProductVariant[] })[]).map(
+          (p) => ({
+            ...p,
+            variants: p.product_variants ?? [],
+          })
+        )
       );
     } catch {
       // silent
