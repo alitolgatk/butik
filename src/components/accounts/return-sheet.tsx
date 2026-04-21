@@ -36,6 +36,7 @@ interface ReturnableItem {
   unitPrice: number;
   originalUnitPrice: number;
   returnPrice: number;
+  returnPriceStr: string;
   maxReturnable: number;
   selectedQty: number;
   currentReturned: number;
@@ -101,6 +102,7 @@ export function ReturnSheet({
               unitPrice: si.unit_price,
               originalUnitPrice: si.unit_price,
               returnPrice: effectiveUnitPrice,
+              returnPriceStr: String(effectiveUnitPrice),
               maxReturnable: available,
               selectedQty: 0,
               currentReturned: si.returned_quantity,
@@ -132,11 +134,17 @@ export function ReturnSheet({
     );
   }
 
-  function setReturnPrice(idx: number, price: number) {
+  function setReturnPriceStr(idx: number, raw: string) {
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === idx ? { ...item, returnPrice: price } : item
-      )
+      prev.map((item, i) => {
+        if (i !== idx) return item;
+        const v = parseFloat(raw);
+        return {
+          ...item,
+          returnPriceStr: raw,
+          returnPrice: !isNaN(v) && v >= 0 ? v : item.returnPrice,
+        };
+      })
     );
   }
 
@@ -463,13 +471,10 @@ export function ReturnSheet({
                               type="number"
                               min="0"
                               step="0.01"
-                              value={item.returnPrice}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value);
-                                if (!isNaN(v) && v >= 0) {
-                                  setReturnPrice(idx, v);
-                                }
-                              }}
+                              value={item.returnPriceStr}
+                              onChange={(e) =>
+                                setReturnPriceStr(idx, e.target.value)
+                              }
                               className="h-8 w-28 text-sm"
                             />
                             {hasDiscount && (
