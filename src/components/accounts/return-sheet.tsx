@@ -16,6 +16,7 @@ import { getSupabase } from "@/lib/supabase";
 import { formatTL } from "@/lib/cart";
 import type { Customer, SaleItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -33,6 +34,8 @@ interface ReturnableItem {
   productName: string;
   variantLabel: string | null;
   unitPrice: number;
+  originalUnitPrice: number;
+  returnPrice: number;
   maxReturnable: number;
   selectedQty: number;
   currentReturned: number;
@@ -62,7 +65,7 @@ export function ReturnSheet({
       const supabase = getSupabase();
       const { data: salesData } = await supabase
         .from("sales")
-        .select("id, total_amount, sale_items(*)")
+        .select("id, total_amount, discount_amount, sale_items(*)")
         .eq("customer_id", customer.id)
         .eq("status", "completed");
 
@@ -71,11 +74,24 @@ export function ReturnSheet({
       for (const sale of (salesData ?? []) as {
         id: string;
         total_amount: number;
+        discount_amount: number;
         sale_items: SaleItem[];
       }[]) {
+        const discount = Number(sale.discount_amount) || 0;
+        const originalTotal = sale.sale_items.reduce(
+          (sum, si) => sum + si.unit_price * si.quantity,
+          0
+        );
+        const ratio =
+          discount > 0 && originalTotal > 0
+            ? (originalTotal - discount) / originalTotal
+            : 1;
+
         for (const si of sale.sale_items) {
           const available = si.quantity - si.returned_quantity;
           if (available > 0) {
+            const effectiveUnitPrice =
+              Math.round(si.unit_price * ratio * 100) / 100;
             returnable.push({
               saleItemId: si.id,
               saleId: sale.id,
@@ -83,6 +99,8 @@ export function ReturnSheet({
               productName: si.product_name,
               variantLabel: si.variant_label,
               unitPrice: si.unit_price,
+              originalUnitPrice: si.unit_price,
+              returnPrice: effectiveUnitPrice,
               maxReturnable: available,
               selectedQty: 0,
               currentReturned: si.returned_quantity,
@@ -114,13 +132,21 @@ export function ReturnSheet({
     );
   }
 
+  function setReturnPrice(idx: number, price: number) {
+    setItems((prev) =>
+      prev.map((item, i) =>
+        i === idx ? { ...item, returnPrice: price } : item
+      )
+    );
+  }
+
   const selectedItems = items.filter((i) => i.selectedQty > 0);
   const totalReturnQty = selectedItems.reduce(
     (s, i) => s + i.selectedQty,
     0
   );
   const totalReturn = selectedItems.reduce(
-    (s, i) => s + i.unitPrice * i.selectedQty,
+    (s, i) => s + i.returnPrice * i.selectedQty,
     0
   );
 
@@ -205,7 +231,6 @@ export function ReturnSheet({
     try {
       const supabase = getSupabase();
 
-      // Common: update returned_quantity + restore stock
       for (const item of selectedItems) {
         await supabase
           .from("sale_items")
@@ -222,15 +247,13 @@ export function ReturnSheet({
       }
 
       if (refundMethod === "cash") {
-        // Group return amounts by sale ID
         const deductionBySale: Record<string, number> = {};
         for (const item of selectedItems) {
           deductionBySale[item.saleId] =
             (deductionBySale[item.saleId] ?? 0) +
-            item.unitPrice * item.selectedQty;
+            item.returnPrice * item.selectedQty;
         }
 
-        // Fetch current totals and apply deductions
         const saleIds = Object.keys(deductionBySale);
         for (const saleId of saleIds) {
           const { data: saleData } = await supabase
@@ -255,12 +278,11 @@ export function ReturnSheet({
           `İade alındı, ${formatTL(totalReturn)} satıştan düşüldü ✓`
         );
       } else {
-        // Credit: reduce customer total_debt AND deduct from sale totals
         const deductionBySale: Record<string, number> = {};
         for (const item of selectedItems) {
           deductionBySale[item.saleId] =
             (deductionBySale[item.saleId] ?? 0) +
-            item.unitPrice * item.selectedQty;
+            item.returnPrice * item.selectedQty;
         }
         for (const saleId of Object.keys(deductionBySale)) {
           const { data: saleData } = await supabase
@@ -348,68 +370,120 @@ export function ReturnSheet({
             </div>
           ) : (
             <div className="flex flex-col gap-2 pt-2">
-              {items.map((item, idx) => (
-                <div
-                  key={item.saleItemId}
-                  className={`rounded-xl border-2 p-3 transition-colors ${
-                    item.selectedQty > 0
-                      ? "border-amber-300 bg-amber-50"
-                      : "border-border bg-background"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold">
-                      {item.productName}
-                      {item.variantLabel && (
-                        <span className="ml-1 font-normal text-muted-foreground">
-                          ({item.variantLabel})
+              {items.map((item, idx) => {
+                const hasDiscount =
+                  item.returnPrice !== item.originalUnitPrice;
+                return (
+                  <div
+                    key={item.saleItemId}
+                    className={`rounded-xl border-2 p-3 transition-colors ${
+                      item.selectedQty > 0
+                        ? "border-amber-300 bg-amber-50"
+                        : "border-border bg-background"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">
+                        {item.productName}
+                        {item.variantLabel && (
+                          <span className="ml-1 font-normal text-muted-foreground">
+                            ({item.variantLabel})
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {hasDiscount ? (
+                          <>
+                            <span className="line-through">
+                              {formatTL(item.originalUnitPrice)}
+                            </span>
+                            {" → "}
+                            {formatTL(item.returnPrice)}
+                          </>
+                        ) : (
+                          formatTL(item.returnPrice)
+                        )}
+                        {" · "}
+                        {item.maxReturnable} adet iade edilebilir
+                      </p>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            setQty(idx, Math.max(0, item.selectedQty - 1))
+                          }
+                          disabled={item.selectedQty === 0}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors disabled:opacity-30"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="w-8 text-center text-sm font-semibold">
+                          {item.selectedQty}
+                        </span>
+                        <button
+                          onClick={() =>
+                            setQty(
+                              idx,
+                              Math.min(
+                                item.maxReturnable,
+                                item.selectedQty + 1
+                              )
+                            )
+                          }
+                          disabled={item.selectedQty >= item.maxReturnable}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors disabled:opacity-30"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {item.selectedQty > 0 && (
+                        <span className="text-sm font-semibold text-amber-700">
+                          {formatTL(item.returnPrice * item.selectedQty)}
                         </span>
                       )}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {formatTL(item.unitPrice)} · {item.maxReturnable} adet
-                      iade edilebilir
-                    </p>
-                  </div>
-
-                  <div className="mt-2 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() =>
-                          setQty(idx, Math.max(0, item.selectedQty - 1))
-                        }
-                        disabled={item.selectedQty === 0}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors disabled:opacity-30"
-                      >
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="w-8 text-center text-sm font-semibold">
-                        {item.selectedQty}
-                      </span>
-                      <button
-                        onClick={() =>
-                          setQty(
-                            idx,
-                            Math.min(
-                              item.maxReturnable,
-                              item.selectedQty + 1
-                            )
-                          )
-                        }
-                        disabled={item.selectedQty >= item.maxReturnable}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border bg-background text-muted-foreground transition-colors disabled:opacity-30"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
                     </div>
+
                     {item.selectedQty > 0 && (
-                      <span className="text-sm font-semibold text-amber-700">
-                        {formatTL(item.unitPrice * item.selectedQty)}
-                      </span>
+                      <div className="mt-2 flex items-center gap-2 border-t border-dashed pt-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <label className="shrink-0 text-xs text-muted-foreground">
+                              İade fiyatı
+                            </label>
+                            {hasDiscount && (
+                              <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                                İndirimli satış
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.returnPrice}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value);
+                                if (!isNaN(v) && v >= 0) {
+                                  setReturnPrice(idx, v);
+                                }
+                              }}
+                              className="h-8 w-28 text-sm"
+                            />
+                            {hasDiscount && (
+                              <span className="text-xs text-muted-foreground">
+                                Liste: {formatTL(item.originalUnitPrice)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {/* Refund method selector */}
               {selectedItems.length > 0 && (
