@@ -77,12 +77,19 @@ export default function GecmisPage() {
 
       if (salesRes.error) throw salesRes.error;
 
+      type CustomerRel = { name: string } | { name: string }[] | null;
+      function resolveName(rel: CustomerRel): string | null {
+        if (!rel) return null;
+        if (Array.isArray(rel)) return rel[0]?.name ?? null;
+        return (rel as { name: string }).name ?? null;
+      }
+
       const allSales = (salesRes.data ?? []) as {
         id: string;
         type: SaleType;
         total_amount: number;
         created_at: string;
-        customers: { name: string }[] | null;
+        customers: CustomerRel;
         sale_items: { product_name: string }[];
       }[];
       const allPayments = (paymentsRes.data ?? []) as {
@@ -91,7 +98,7 @@ export default function GecmisPage() {
         created_at: string;
         note: string | null;
         payment_type: DebtPaymentType | null;
-        customers: { name: string }[] | null;
+        customers: CustomerRel;
       }[];
 
       const saleEntries: HistoryEntry[] = allSales.map((s) => ({
@@ -100,7 +107,7 @@ export default function GecmisPage() {
         type: s.type,
         total_amount: s.total_amount,
         created_at: s.created_at,
-        customer_name: s.customers?.[0]?.name ?? null,
+        customer_name: resolveName(s.customers),
         item_names: (s.sale_items ?? []).map((i) => i.product_name).join(" "),
       }));
 
@@ -109,7 +116,7 @@ export default function GecmisPage() {
         id: p.id,
         amount: Number(p.amount),
         created_at: p.created_at,
-        customer_name: p.customers?.[0]?.name ?? null,
+        customer_name: resolveName(p.customers),
         note: p.note,
         payment_type: p.payment_type,
       }));

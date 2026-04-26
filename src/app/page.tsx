@@ -56,9 +56,11 @@ function formatClock(d: Date): string {
 interface DashboardData {
   todaySalesCount: number;
   todaySalesTotal: number;
+  todayItemCount: number;
   activeDebtCount: number;
   activeEmanetCount: number;
   totalReceivables: number;
+  totalStock: number;
 }
 
 type FeedEntry =
@@ -92,9 +94,11 @@ export default function HomePage() {
   const [data, setData] = useState<DashboardData>({
     todaySalesCount: 0,
     todaySalesTotal: 0,
+    todayItemCount: 0,
     activeDebtCount: 0,
     activeEmanetCount: 0,
     totalReceivables: 0,
+    totalStock: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,13 +140,14 @@ export default function HomePage() {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
-        const [salesRes, debtRes, emanetRes, recentSalesRes, recentPaymentsRes] =
+        const [salesRes, debtRes, emanetRes, recentSalesRes, recentPaymentsRes, todayItemsRes, stockRes] =
           await Promise.all([
             supabase
               .from("sales")
               .select("total_amount")
               .gte("created_at", todayStart.toISOString())
-              .neq("type", "emanet"),
+              .neq("type", "emanet")
+              .eq("status", "completed"),
             supabase.from("customers").select("id, total_debt").gt("total_debt", 0),
             supabase
               .from("sales")
@@ -160,6 +165,15 @@ export default function HomePage() {
               .select("id, amount, created_at, customer_id, note, payment_type, remaining_balance")
               .order("created_at", { ascending: false })
               .limit(10),
+            supabase
+              .from("sale_items")
+              .select("quantity, sales!inner(created_at, type, status)")
+              .gte("sales.created_at", todayStart.toISOString())
+              .neq("sales.type", "emanet")
+              .eq("sales.status", "completed"),
+            supabase
+              .from("products")
+              .select("stock"),
           ]);
 
         const sales = salesRes.data ?? [];
@@ -174,12 +188,24 @@ export default function HomePage() {
           0
         );
 
+        const todayItemCount = (todayItemsRes.data ?? []).reduce(
+          (sum, r) => sum + Number((r as { quantity: number }).quantity),
+          0
+        );
+
+        const totalStock = (stockRes.data ?? []).reduce(
+          (sum, p) => sum + Number((p as { stock: number }).stock),
+          0
+        );
+
         setData({
           todaySalesCount: sales.length,
           todaySalesTotal: totalAmount,
+          todayItemCount,
           activeDebtCount: debtCustomers.length,
           activeEmanetCount: emanetRes.data?.length ?? 0,
           totalReceivables,
+          totalStock,
         });
 
         const recentSales = (recentSalesRes.data ?? []) as {
@@ -598,8 +624,16 @@ export default function HomePage() {
               title="Aktif Emanetler"
               loading={loading && !error}
               primaryValue={`${data.activeEmanetCount}`}
-              secondaryValue="adet"
+              secondaryValue={`bugün ${data.todayItemCount} ürün`}
               bgClass="bg-violet-50"
+            />
+            <SummaryCard
+              icon={<PackageCheck className="h-5 w-5 text-sky-600" />}
+              title="Toplam Stok"
+              loading={loading && !error}
+              primaryValue={`${data.totalStock}`}
+              secondaryValue="adet ürün"
+              bgClass="bg-sky-50"
             />
           </div>
         </div>
