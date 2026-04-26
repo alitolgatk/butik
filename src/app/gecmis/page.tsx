@@ -78,11 +78,11 @@ export default function GecmisPage() {
       if (salesRes.error) throw salesRes.error;
 
       type CustomerRel = { name: string } | { name: string }[] | null;
-      function resolveName(rel: CustomerRel): string | null {
+      const resolveName = (rel: CustomerRel): string | null => {
         if (!rel) return null;
         if (Array.isArray(rel)) return rel[0]?.name ?? null;
         return (rel as { name: string }).name ?? null;
-      }
+      };
 
       const allSales = (salesRes.data ?? []) as {
         id: string;
