@@ -6,6 +6,7 @@ import { Loader2, PackageOpen, Plus, Search } from "lucide-react";
 import { getSupabase } from "@/lib/supabase";
 import type { Product, ProductVariant } from "@/lib/types";
 import { Input } from "@/components/ui/input";
+import { PhotoOptimizer } from "@/components/photo-optimizer";
 import { ProductCard } from "@/components/product-card";
 import { ProductForm } from "@/components/product-form";
 
@@ -104,6 +105,11 @@ export default function UrunlerPage() {
             className="pl-9"
           />
         </div>
+
+        {/* Eski büyük fotoğrafları küçültme aracı (gerekmiyorsa görünmez) */}
+        {!loading && (
+          <PhotoOptimizer products={products} onDone={fetchProducts} />
+        )}
 
         {/* Content */}
         {loading ? (

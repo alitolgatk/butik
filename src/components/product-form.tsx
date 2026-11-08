@@ -1,12 +1,17 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import Image from "next/image";
 import { Camera, ChevronDown, ChevronRight, Loader2, Palette, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { getSupabase } from "@/lib/supabase";
+import {
+  PhotoQuotaError,
+  removeProductPhoto,
+  uploadProductPhoto,
+} from "@/lib/photo";
 import type { Product, ProductVariant } from "@/lib/types";
+import { ProductPhoto } from "@/components/product-photo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -341,19 +346,32 @@ export function ProductForm({
 
   // ── Upload ──
 
-  async function uploadPhoto(): Promise<string | null> {
-    if (!photoFile) return product?.photo_url ?? null;
-    const supabase = getSupabase();
-    const ext = photoFile.name.split(".").pop() ?? "jpg";
-    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const { error } = await supabase.storage
-      .from("product-photos")
-      .upload(fileName, photoFile, { cacheControl: "3600", upsert: false });
-    if (error) throw new Error("Fotoğraf yüklenemedi: " + error.message);
-    const { data } = supabase.storage
-      .from("product-photos")
-      .getPublicUrl(fileName);
-    return data.publicUrl;
+  /**
+   * Kaydedilecek photo_url değerini döndürür.
+   * - Yeni fotoğraf seçildiyse küçültüp yükler.
+   * - Seçilmediyse mevcut fotoğrafı korur; "Fotoğrafı Kaldır"a basıldıysa null döner.
+   * Storage kotası doluysa (PhotoQuotaError) yüklemeyi atlayıp ürünü mevcut
+   * fotoğrafla kaydeder, böylece ürün kaydı fotoğraf yüzünden engellenmez.
+   */
+  async function uploadPhoto(): Promise<{
+    url: string | null;
+    uploaded: boolean;
+  }> {
+    if (!photoFile) {
+      return { url: photoPreview ? (product?.photo_url ?? null) : null, uploaded: false };
+    }
+    try {
+      const { url } = await uploadProductPhoto(photoFile);
+      return { url, uploaded: true };
+    } catch (err) {
+      if (err instanceof PhotoQuotaError) {
+        toast.warning(
+          "Supabase depolama kotası dolu: fotoğraf yüklenemedi. Ürün fotoğraf olmadan kaydediliyor."
+        );
+        return { url: product?.photo_url ?? null, uploaded: false };
+      }
+      throw err;
+    }
   }
 
   // ── Save ──
@@ -374,9 +392,14 @@ export function ProductForm({
     }
 
     setSaving(true);
+    // Ürün kaydı başarısız olursa yeni yüklenen fotoğrafın sahipsiz kalmaması için
+    let newlyUploadedUrl: string | null = null;
+    let saved = false;
     try {
       const supabase = getSupabase();
-      const photoUrl = await uploadPhoto();
+      const photo = await uploadPhoto();
+      const photoUrl = photo.url;
+      if (photo.uploaded) newlyUploadedUrl = photoUrl;
       const allRows = hasVariants ? getAllVariantRows() : [];
       const totalStock = hasVariants
         ? allRows.reduce((s, v) => s + v.stock, 0)
@@ -485,10 +508,21 @@ export function ProductForm({
         }
       }
 
+      saved = true;
+
+      // Fotoğraf değiştiyse/kaldırıldıysa eski dosyayı Storage'dan temizle
+      const oldPhotoUrl = product?.photo_url ?? null;
+      if (oldPhotoUrl && oldPhotoUrl !== photoUrl) {
+        await removeProductPhoto(oldPhotoUrl);
+      }
+
       toast.success(isEditing ? "Ürün güncellendi" : "Ürün eklendi");
       onSaved();
       onOpenChange(false);
     } catch (err) {
+      if (!saved && newlyUploadedUrl) {
+        await removeProductPhoto(newlyUploadedUrl);
+      }
       toast.error(err instanceof Error ? err.message : "Bir hata oluştu");
     } finally {
       setSaving(false);
@@ -502,21 +536,12 @@ export function ProductForm({
     setDeleting(true);
     try {
       const supabase = getSupabase();
-      if (product.photo_url) {
-        const parts = product.photo_url.split("product-photos/");
-        const fileName = parts[1];
-        if (fileName) {
-          const { error: storageErr } = await supabase.storage
-            .from("product-photos")
-            .remove([fileName]);
-          if (storageErr) console.error("Fotoğraf silinemedi:", storageErr);
-        }
-      }
       const { error } = await supabase
         .from("products")
         .delete()
         .eq("id", product.id);
       if (error) throw error;
+      await removeProductPhoto(product.photo_url);
       toast.success("Ürün silindi");
       onSaved();
       onOpenChange(false);
@@ -569,12 +594,12 @@ export function ProductForm({
                 className="relative flex h-32 w-full items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-input bg-muted/50 transition-colors hover:bg-muted"
               >
                 {photoPreview ? (
-                  <Image
-                    src={photoPreview}
+                  <ProductPhoto
+                    url={photoPreview}
                     alt="Ürün fotoğrafı"
-                    fill
+                    variant="full"
                     className="object-contain"
-                    unoptimized
+                    iconClassName="h-8 w-8 text-muted-foreground/40"
                   />
                 ) : (
                   <div className="flex flex-col items-center gap-1 text-muted-foreground">

@@ -1,14 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import {
   ArrowRight,
   Loader2,
   Minus,
   Plus,
   Search,
-  ShoppingBag,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +17,7 @@ import type { CartItem } from "@/lib/cart";
 import { cartItemKey, cartTotal, formatTL } from "@/lib/cart";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ProductPhoto } from "@/components/product-photo";
 import { VariantPicker } from "@/components/sales/variant-picker";
 import { PaymentTypePicker } from "@/components/sales/payment-type-picker";
 import { CustomerPicker } from "@/components/sales/customer-picker";
@@ -276,20 +275,12 @@ export default function SatisPage() {
                     className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
                   >
                     <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-muted">
-                      {p.photo_url ? (
-                        <Image
-                          src={p.photo_url}
-                          alt={p.name}
-                          fill
-                          className="object-cover"
-                          sizes="48px"
-                          unoptimized
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center">
-                          <ShoppingBag className="h-5 w-5 text-muted-foreground/40" />
-                        </div>
-                      )}
+                      <ProductPhoto
+                        url={p.photo_url}
+                        alt={p.name}
+                        variant="thumb"
+                        className="object-cover"
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{p.name}</p>
@@ -343,20 +334,12 @@ export default function SatisPage() {
                     className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors active:bg-accent"
                   >
                     <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-muted">
-                      {p.photo_url ? (
-                        <Image
-                          src={p.photo_url}
-                          alt={p.name}
-                          fill
-                          className="object-cover"
-                          sizes="48px"
-                          unoptimized
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center">
-                          <ShoppingBag className="h-5 w-5 text-muted-foreground/40" />
-                        </div>
-                      )}
+                      <ProductPhoto
+                        url={p.photo_url}
+                        alt={p.name}
+                        variant="thumb"
+                        className="object-cover"
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{p.name}</p>

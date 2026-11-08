@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { ShoppingBag } from "lucide-react";
+import { ProductPhoto } from "@/components/product-photo";
 
 interface ProductCardProps {
   name: string;
@@ -32,20 +31,13 @@ export function ProductCard({
       className="flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-shadow active:shadow-md"
     >
       <div className="relative aspect-square w-full bg-muted/50">
-        {photoUrl ? (
-          <Image
-            src={photoUrl}
-            alt={name}
-            fill
-            className="object-cover"
-            sizes="(max-width: 640px) 50vw, 200px"
-            unoptimized
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <ShoppingBag className="h-10 w-10 text-muted-foreground/40" />
-          </div>
-        )}
+        <ProductPhoto
+          url={photoUrl}
+          alt={name}
+          variant="thumb"
+          className="object-cover"
+          iconClassName="h-10 w-10 text-muted-foreground/40"
+        />
       </div>
       <div className="flex flex-1 flex-col gap-0.5 p-2.5">
         <span className="line-clamp-2 text-sm font-medium leading-tight">
